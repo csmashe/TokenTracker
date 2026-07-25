@@ -381,6 +381,18 @@ test("session browser source filter isolates codex from claude after merge", asy
     { timestamp: "2026-07-18T06:00:00Z", type: "session_meta", payload: { id: codexId, cwd: home, model_provider: "openai" } },
     { timestamp: "2026-07-18T06:00:01Z", type: "turn_context", payload: { turn_id: "t1", cwd: home, model: "gpt-5.6-sol" } },
     { timestamp: "2026-07-18T06:00:02Z", type: "event_msg", payload: { type: "user_message", message: "do" } },
+    // Real usage matters: the browser lists only sessions that spent tokens.
+    {
+      timestamp: "2026-07-18T06:00:03Z",
+      type: "event_msg",
+      payload: {
+        type: "token_count",
+        info: {
+          last_token_usage: { input_tokens: 7, cached_input_tokens: 0, cache_creation_input_tokens: 0, output_tokens: 2, reasoning_output_tokens: 0, total_tokens: 9 },
+          total_token_usage: { input_tokens: 7, cached_input_tokens: 0, cache_creation_input_tokens: 0, output_tokens: 2, reasoning_output_tokens: 0, total_tokens: 9 },
+        },
+      },
+    },
   ].map(JSON.stringify).join("\n")}\n`);
   const codex = await scanCodexSession(codexFile);
 
@@ -388,6 +400,92 @@ test("session browser source filter isolates codex from claude after merge", asy
   const codexOnly = listSessionsForBrowser(all).sessions.filter((row) => row.source === "codex");
   assert.equal(codexOnly.length, 1);
   assert.equal(codexOnly[0].source, "codex");
+});
+
+test("session browser hides sessions that never spent tokens", async () => {
+  // Non-session logs under ~/.claude/projects (skill-injections.jsonl, …) and
+  // sessions abandoned before the model replied both scan to token-less rows.
+  // They used to render as "unknown · 0 tokens · $0.00" noise.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tt-empty-"));
+  const file = path.join(dir, "journal.jsonl");
+  fs.writeFileSync(file, `${[
+    { type: "user", sessionId: "e-1", cwd: "/repo", timestamp: "2026-07-18T01:00:00Z", message: { content: "hi" } },
+  ].map(JSON.stringify).join("\n")}\n`);
+  const row = await scanClaudeSession(file);
+  assert.equal(row.total_tokens, 0);
+  assert.equal(listSessionsForBrowser([row]).sessions.length, 0);
+});
+
+test("local-only identity fields never reach the cloud or CSV surface", async () => {
+  // title / session_id / project_ref exist so the browser can name and resume a
+  // session, and project_ref is deliberately shown in the UI (the resume
+  // command only works from that directory). They must stay on this machine:
+  // summarizeSessions feeds both the cloud account view and the CSV export.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tt-privacy-"));
+  const file = path.join(dir, "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee.jsonl");
+  fs.writeFileSync(file, `${[
+    { type: "ai-title", aiTitle: "TITLE-MUST-NOT-LEAVE-THIS-MACHINE", sessionId: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee" },
+    { type: "user", sessionId: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", cwd: "/DIRNAME-MUST-NOT-LEAVE/myproject", timestamp: "2026-07-18T01:00:00Z", message: { content: "hi" } },
+    { type: "assistant", sessionId: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", cwd: "/DIRNAME-MUST-NOT-LEAVE/myproject", timestamp: "2026-07-18T01:01:00Z", message: { id: "p1", model: "claude-test", usage: { input_tokens: 5, output_tokens: 1 }, content: [] } },
+  ].map(JSON.stringify).join("\n")}\n`);
+  const row = await scanClaudeSession(file);
+
+  // The local browser payload keeps all three.
+  const local = listSessionsForBrowser([row]).sessions[0];
+  assert.equal(local.title, "TITLE-MUST-NOT-LEAVE-THIS-MACHINE");
+  assert.equal(local.project_ref, "/DIRNAME-MUST-NOT-LEAVE/myproject");
+  assert.ok(local.session_id);
+  // project_key (the directory's basename) is a different thing: project
+  // attribution is a shipped cloud feature, so it is expected to travel.
+  assert.equal(local.project_key, "myproject");
+
+  // The cloud/CSV payload keeps none of them.
+  const summary = summarizeSessions([row]);
+  for (const cloudRow of summary.sessions) {
+    for (const field of ["title", "session_id", "project_ref", "_cache_key"]) {
+      assert.equal(field in cloudRow, false, `${field} must be stripped from the cloud payload`);
+    }
+  }
+  const serialized = `${JSON.stringify(summary)}\n${sessionsToCsv(summary.sessions)}`;
+  for (const secret of ["TITLE-MUST-NOT-LEAVE-THIS-MACHINE", "DIRNAME-MUST-NOT-LEAVE", "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"]) {
+    assert.equal(serialized.includes(secret), false, `${secret} leaked into a cloud/CSV payload`);
+  }
+});
+
+test("a log with no sessionId record yields no resume command", async () => {
+  // scanClaudeSession still falls back to the basename for stable grouping, but
+  // session_id must stay null — otherwise a non-session log named journal.jsonl
+  // produces `claude --resume journal`, which always fails.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tt-nosid-"));
+  const file = path.join(dir, "journal.jsonl");
+  fs.writeFileSync(file, `${[
+    { type: "user", cwd: "/repo", timestamp: "2026-07-18T01:00:00Z", message: { content: "hi" } },
+    { type: "assistant", cwd: "/repo", timestamp: "2026-07-18T01:01:00Z", message: { id: "n1", model: "claude-test", usage: { input_tokens: 5, output_tokens: 1 }, content: [] } },
+  ].map(JSON.stringify).join("\n")}\n`);
+  const row = await scanClaudeSession(file);
+  assert.equal(row.session_id, null);
+  assert.ok(row.total_tokens > 0, "fixture must spend tokens so the row is listed");
+  assert.equal(listSessionsForBrowser([row]).sessions[0].resume_command, null);
+});
+
+test("session duration counts active time, not the resumed wall-clock span", async () => {
+  // A resumed session's first and last timestamps can be months apart; the idle
+  // gap between them is not working time (observed: 2142h on a 0-turn session).
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tt-dur-"));
+  const file = path.join(dir, "d-1.jsonl");
+  const line = (ts, extra = {}) => ({ type: "user", sessionId: "d-1", cwd: "/repo", timestamp: ts, message: { content: "hi" }, ...extra });
+  fs.writeFileSync(file, `${[
+    line("2026-05-01T00:00:00Z"),
+    line("2026-05-01T00:05:00Z"),
+    // Two months idle, then a resumed burst.
+    line("2026-07-01T00:00:00Z"),
+    line("2026-07-01T00:10:00Z"),
+    { type: "assistant", sessionId: "d-1", cwd: "/repo", timestamp: "2026-07-01T00:10:30Z", message: { id: "d1", model: "claude-test", usage: { input_tokens: 5, output_tokens: 1 }, content: [] } },
+  ].map(JSON.stringify).join("\n")}\n`);
+  const row = await scanClaudeSession(file);
+  // 5min + 10min + 30s of active work, not ~61 days.
+  assert.equal(row.duration_ms, (5 * 60 + 10 * 60 + 30) * 1000);
+  assert.ok(row.started_at < row.ended_at, "the true span is still recorded");
 });
 
 test("resume commands reject ids that could inject shell syntax", () => {

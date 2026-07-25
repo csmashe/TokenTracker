@@ -20,6 +20,7 @@ const {
   readEveryCodeNotify,
   buildCodexNotifyCmd,
   buildEveryCodeNotifyCmd,
+  isManagedNotifyCmd,
 } = require("../lib/codex-config");
 const {
   upsertClaudeHook,
@@ -1040,13 +1041,11 @@ function shouldReplaceStoredOriginalNotify(currentNotify, expectedNotify) {
   return currentNotify === null || Array.isArray(currentNotify);
 }
 
+// Single source of truth for "is this notify command ours?", shared with
+// status (configured check) and uninstall (restore gate) so the three cannot
+// drift apart. See isManagedNotifyCmd in src/lib/codex-config.js.
 function isTokenTrackerNotify(cmd, expectedNotify) {
-  if (!Array.isArray(cmd)) return false;
-  if (arraysEqual(cmd, expectedNotify)) return true;
-  const notifyPath = cmd.find((part) => typeof part === "string" && part.endsWith("notify.cjs"));
-  if (!notifyPath) return false;
-  const normalized = notifyPath.replace(/\\/g, "/");
-  return normalized.includes("/.tokentracker/");
+  return isManagedNotifyCmd(cmd, expectedNotify);
 }
 
 function isSkyComputerUseNotify(cmd) {

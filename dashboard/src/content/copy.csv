@@ -1331,7 +1331,17 @@ sessions.resume.unavailable,ui,SessionsPage,SessionsPage,resume_unavailable,"Res
 sessions.empty.title,ui,SessionsPage,SessionsPage,empty_title,"No sessions yet",,active
 sessions.empty.body,ui,SessionsPage,SessionsPage,empty_body,"Run Claude Code or Codex on this machine and your sessions will show up here.",,active
 sessions.empty.filtered_title,ui,SessionsPage,SessionsPage,empty_filtered_title,"No matching sessions",,active
-sessions.empty.filtered_body,ui,SessionsPage,SessionsPage,empty_filtered_body,"Try a different search or clear the filters.",,active
+sessions.empty.filtered_body,ui,SessionsPage,SessionsPage,empty_filtered_body,"Try a different search, or widen the date range.",,active
+sessions.col.turns,ui,SessionsPage,SessionsPage,col_turns,"Turns",,active
+sessions.project.copy_hint,ui,SessionsPage,SessionsPage,project_copy_hint,"Click to copy this path",,active
+sessions.project.copy_aria,ui,SessionsPage,SessionsPage,project_copy_aria,"Copy the local path for {{project}}",,active
+sessions.project.copied,ui,SessionsPage,SessionsPage,project_copied,"Project path copied",,active
+sessions.project.copy_failed,ui,SessionsPage,SessionsPage,project_copy_failed,"Could not copy path",,active
+sessions.action.load_more,ui,SessionsPage,SessionsPage,load_more,"Show more sessions",,active
+sessions.error.title,ui,SessionsPage,SessionsPage,error_title,"Could not load sessions",,active
+sessions.error.retry,ui,SessionsPage,SessionsPage,error_retry,"Try again",,active
+sessions.error.outdated_app,ui,SessionsPage,SessionsPage,error_outdated_app,"This TokenTracker app is too old to list sessions. Update to the latest version.",,active
+sessions.truncated,ui,SessionsPage,SessionsPage,truncated,"Showing the {{shown}} most recent of {{total}} sessions. Narrow the date range to see older ones.",,active
 sessions.privacy,ui,SessionsPage,SessionsPage,privacy,"Processed locally. Prompt and response bodies, command output, and diff contents are never retained or uploaded.",,active
 limits.alert.enable,limits,LimitsPage,LimitsPage,enable_alerts,"Enable predictive limit alerts",,active
 limits.alert.disable,limits,LimitsPage,LimitsPage,disable_alerts,"Disable predictive limit alerts",,active

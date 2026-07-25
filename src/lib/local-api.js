@@ -2169,7 +2169,10 @@ function createLocalApiHandler({ queuePath }) {
         const result = listSessionsForBrowser(sessions, { from, to, limit });
         json(res, { from, to, ...result });
       } catch (error) {
-        json(res, { available: false, error: error?.message || "Session browser failed" }, 500);
+        // Node fs errors embed the absolute path ("EACCES ... open '/Users/…'").
+        // Keep that out of the HTTP body and log it locally instead.
+        console.warn("[local-api] session browser failed:", error?.message || error);
+        json(res, { available: false, error: "Session browser failed" }, 500);
       }
       return true;
     }

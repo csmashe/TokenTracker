@@ -1,9 +1,10 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { Calendar, Loader2, RefreshCw, Search, Terminal, X as XIcon } from "lucide-react";
 import { Input } from "../ui/components";
 import { SegmentedControl } from "../ui/components/SegmentedControl.jsx";
 import { SearchableSelect } from "../ui/components/SearchableSelect.jsx";
 import { ProviderIcon } from "../ui/dashboard/components/ProviderIcon.jsx";
+import { HoverTooltip } from "../ui/components/HoverTooltip.jsx";
 import { showToast } from "../ui/components/Toast.jsx";
 import { LocalOnlyNotice } from "../components/LocalOnlyNotice.jsx";
 import { copy } from "../lib/copy";
@@ -11,11 +12,20 @@ import { cn } from "../lib/cn";
 import { getSessions } from "../lib/sessions-api";
 import { formatCompactNumber, formatUsdCurrency } from "../lib/format";
 import { useCurrency } from "../hooks/useCurrency";
+import { useLocale } from "../hooks/useLocale";
+import { isLocalDashboardHost } from "../lib/host-mode";
 import { isMockEnabled } from "../lib/mock-data";
 
-const IS_LOCAL_HOST =
-  typeof window !== "undefined" &&
-  (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
+const IS_LOCAL_HOST = isLocalDashboardHost();
+
+// Stable empty array so the memos below don't recompute on every render while
+// there is no data yet.
+const NO_SESSIONS = [];
+
+// How many rows to put in the DOM at once. The whole (already fetched) list is
+// filtered in memory; only the rendered slice grows as the user scrolls, so a
+// few thousand sessions stay responsive without a virtualization dependency.
+const PAGE_SIZE = 100;
 
 const SOURCE_FILTERS = [
   { id: "all", label: () => copy("sessions.filter.source_all") },
@@ -30,24 +40,36 @@ const DATE_RANGES = [
   { id: "90d", days: 90, label: () => copy("sessions.filter.range_90d") },
 ];
 
-// Translate a range chip into the backend's `from` (YYYY-MM-DD, inclusive).
-// The session browser already filters by day server-side, so narrowing the
-// range also widens the effective window inside the 500-row cap.
-function rangeToFrom(rangeId) {
+// Earliest timestamp a range chip admits, as epoch ms in the *viewer's* time
+// zone. The whole list is fetched once and filtered here, so the range chips
+// never re-query: switching them is instant and cannot drop rows the way a
+// server-side day-string comparison did (a UTC-sliced day boundary put a
+// UTC+8 user's early-morning sessions on the wrong calendar day).
+function rangeStartMs(rangeId) {
   const days = DATE_RANGES.find((range) => range.id === rangeId)?.days || 0;
-  if (!days) return "";
-  const from = new Date();
-  // Inclusive range: "7d" is today plus the previous six calendar days.
-  from.setDate(from.getDate() - (days - 1));
-  return from.toISOString().slice(0, 10);
+  if (!days) return 0;
+  const start = new Date();
+  // Inclusive range: "7d" is today plus the previous six local calendar days.
+  start.setDate(start.getDate() - (days - 1));
+  start.setHours(0, 0, 0, 0);
+  return start.getTime();
 }
 
-function formatWhen(value) {
+// A session counts as inside the window when it *overlaps* it: one that started
+// earlier but ran into the window is still relevant, and it is also the row
+// sorted to the top (the list is ordered by ended_at).
+function overlapsRange(session, startMs) {
+  if (!startMs) return true;
+  const ended = Date.parse(session.ended_at || session.started_at || "");
+  return Number.isFinite(ended) ? ended >= startMs : true;
+}
+
+function formatWhen(value, locale) {
   if (!value) return "—";
   const ms = Date.parse(value);
   if (!Number.isFinite(ms)) return "—";
   try {
-    return new Date(ms).toLocaleString(undefined, {
+    return new Date(ms).toLocaleString(locale || undefined, {
       year: "numeric",
       month: "short",
       day: "numeric",
@@ -86,7 +108,7 @@ async function copyToClipboard(text) {
   return ok;
 }
 
-function SessionRow({ session }) {
+const SessionRow = React.memo(function SessionRow({ session, locale }) {
   const { currency, rate } = useCurrency();
   const provider = String(session.source || "").toUpperCase();
   const duration = formatDuration(session.duration_ms);
@@ -95,11 +117,55 @@ function SessionRow({ session }) {
   const title = session.title || projectLabel;
   const showProjectInMeta = Boolean(session.title && session.project_key);
 
+  // The resume command only works from the session's own directory, so the full
+  // local path has to stay reachable. Hover reveals it, click copies it — that
+  // keeps a long absolute path out of every row while still being one click
+  // away from `cd`.
+  const pathTooltip = session.project_ref
+    ? `${session.project_ref}\n${copy("sessions.project.copy_hint")}`
+    : undefined;
+
+  const handleCopyPath = async () => {
+    if (!session.project_ref) return;
+    try {
+      const ok = await copyToClipboard(session.project_ref);
+      if (ok) showToast({ title: copy("sessions.project.copied") });
+      else showToast({ title: copy("sessions.project.copy_failed") });
+    } catch {
+      showToast({ title: copy("sessions.project.copy_failed") });
+    }
+  };
+
+  // The hover wrapper must NOT carry `truncate`: that sets overflow:hidden,
+  // which clips the tooltip (it is absolutely positioned above the label).
+  // Wrapper owns `group relative`; the inner button owns the truncation.
+  const projectLabelNode = (extraClass) => (
+    <span className="group relative inline-flex min-w-0 max-w-full">
+      <HoverTooltip text={pathTooltip} placement="bottom" />
+      <button
+        type="button"
+        onClick={handleCopyPath}
+        aria-label={copy("sessions.project.copy_aria", { project: projectLabel })}
+        className={cn(
+          "max-w-full truncate rounded text-left underline decoration-dotted decoration-oai-gray-300 underline-offset-4 hover:decoration-oai-gray-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-oai-brand-500 dark:decoration-oai-gray-600 dark:hover:decoration-oai-gray-400",
+          extraClass,
+        )}
+      >
+        {projectLabel}
+      </button>
+    </span>
+  );
+
   const handleCopy = async () => {
     if (!command) return;
     try {
-      await copyToClipboard(command);
-      showToast({ title: copy("sessions.resume.copied") });
+      // The insecure-context fallback reports failure by returning false
+      // instead of throwing, so the return value decides the toast — otherwise
+      // we claim success with an empty clipboard.
+      const ok = await copyToClipboard(command);
+      // Literal copy() keys so the copy-registry validator can see both.
+      if (ok) showToast({ title: copy("sessions.resume.copied") });
+      else showToast({ title: copy("sessions.resume.copy_failed") });
     } catch {
       showToast({ title: copy("sessions.resume.copy_failed") });
     }
@@ -113,9 +179,15 @@ function SessionRow({ session }) {
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="truncate font-medium text-oai-black dark:text-white">
-              {title}
-            </span>
+            {/* With no agent-authored title the heading *is* the project name,
+                so the copy affordance moves there rather than duplicating it. */}
+            {!session.title && session.project_ref ? (
+              projectLabelNode("font-medium text-oai-black dark:text-white")
+            ) : (
+              <span className="truncate font-medium text-oai-black dark:text-white">
+                {title}
+              </span>
+            )}
             {session.first_pass ? (
               <span className="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300">
                 {copy("sessions.badge.first_pass")}
@@ -125,13 +197,17 @@ function SessionRow({ session }) {
           <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-oai-gray-500 dark:text-oai-gray-400">
             {showProjectInMeta ? (
               <>
-                <span className="truncate">{projectLabel}</span>
+                {session.project_ref ? (
+                  projectLabelNode("hover:text-oai-black dark:hover:text-white")
+                ) : (
+                  <span className="truncate">{projectLabel}</span>
+                )}
                 <span aria-hidden>·</span>
               </>
             ) : null}
             <span className="truncate">{session.model || copy("sessions.model.unknown")}</span>
             <span aria-hidden>·</span>
-            <span className="tabular-nums">{formatWhen(session.started_at)}</span>
+            <span className="tabular-nums">{formatWhen(session.started_at, locale)}</span>
             {duration ? (
               <>
                 <span aria-hidden>·</span>
@@ -139,11 +215,6 @@ function SessionRow({ session }) {
               </>
             ) : null}
           </div>
-          {session.project_ref ? (
-            <div className="mt-0.5 truncate font-mono text-[11px] text-oai-gray-400 dark:text-oai-gray-500">
-              {session.project_ref}
-            </div>
-          ) : null}
         </div>
       </div>
 
@@ -156,6 +227,10 @@ function SessionRow({ session }) {
           <div className="flex w-16 flex-col-reverse">
             <dt className="text-[11px] text-oai-gray-400 dark:text-oai-gray-500">{copy("sessions.col.cost")}</dt>
             <dd className="tabular-nums text-sm font-medium text-oai-black dark:text-white">{formatUsdCurrency(session.cost_usd, { currency, rate })}</dd>
+          </div>
+          <div className="hidden w-10 flex-col-reverse sm:flex">
+            <dt className="text-[11px] text-oai-gray-400 dark:text-oai-gray-500">{copy("sessions.col.turns")}</dt>
+            <dd className="tabular-nums text-sm font-medium text-oai-black dark:text-white">{formatCompactNumber(session.turns)}</dd>
           </div>
           <div className="hidden w-10 flex-col-reverse sm:flex">
             <dt className="text-[11px] text-oai-gray-400 dark:text-oai-gray-500">{copy("sessions.col.edits")}</dt>
@@ -182,7 +257,7 @@ function SessionRow({ session }) {
       </div>
     </li>
   );
-}
+});
 
 export function SessionsPage() {
   const [data, setData] = useState(null);
@@ -193,17 +268,24 @@ export function SessionsPage() {
   const [rangeFilter, setRangeFilter] = useState("all");
   const [projectFilter, setProjectFilter] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const requestIdRef = useRef(0);
+  const { resolvedLocale } = useLocale();
 
-  const load = async (refresh = false, rangeId = rangeFilter) => {
+  // Fetch the whole list once. The payload is metadata only (~0.5KB/session)
+  // over loopback, and the server builds every session regardless of the date
+  // range anyway, so a server-side window would cost a round trip without
+  // saving any work — and it would make the source/project/search filters mean
+  // "within the fetched page" instead of "within your sessions".
+  const load = useCallback(async (refresh = false) => {
     const requestId = ++requestIdRef.current;
     if (refresh) setRefreshing(true);
     else setIsLoading(true);
     setError(null);
     try {
-      const result = await getSessions({ limit: 500, from: rangeToFrom(rangeId), refresh });
-      // A cold scan can take several seconds. If the user changes ranges while
-      // it is running, never let the older response overwrite the newer range.
+      const result = await getSessions({ refresh });
+      // A cold scan can take several seconds; never let an older response
+      // overwrite a newer one.
       if (requestId === requestIdRef.current) setData(result);
     } catch (err) {
       if (requestId === requestIdRef.current) setError(err?.message || String(err));
@@ -213,23 +295,14 @@ export function SessionsPage() {
         setRefreshing(false);
       }
     }
-  };
-
-  // Switching the date range re-queries so the 500-row window covers the
-  // selected span, rather than trimming an already-truncated list client-side.
-  const handleRangeChange = (rangeId) => {
-    if (rangeId === rangeFilter) return;
-    setRangeFilter(rangeId);
-    void load(false, rangeId);
-  };
+  }, []);
 
   useEffect(() => {
     if (IS_LOCAL_HOST || isMockEnabled()) void load(false);
     else setIsLoading(false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [load]);
 
-  const allSessions = data?.sessions || [];
+  const allSessions = data?.sessions || NO_SESSIONS;
   // Distinct project names present in the loaded sessions, for the project
   // filter dropdown. Keyed by project_key (what the row filter matches on).
   const projectOptions = useMemo(() => {
@@ -244,18 +317,63 @@ export function SessionsPage() {
     return options.sort((a, b) => a.label.localeCompare(b.label));
   }, [allSessions]);
 
+  // Typing stays responsive on long lists: the filter runs against a deferred
+  // copy of the query, so keystrokes paint before the list re-filters.
+  const deferredQuery = useDeferredValue(searchQuery);
+
   const filtered = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
+    const q = deferredQuery.trim().toLowerCase();
+    const startMs = rangeStartMs(rangeFilter);
     return allSessions.filter((row) => {
       if (sourceFilter !== "all" && row.source !== sourceFilter) return false;
       if (projectFilter !== "all" && row.project_key !== projectFilter) return false;
+      if (!overlapsRange(row, startMs)) return false;
       if (!q) return true;
       const haystack = `${row.title || ""} ${row.project_key || ""} ${row.model || ""} ${row.project_ref || ""} ${row.session_id || ""}`.toLowerCase();
       return haystack.includes(q);
     });
-  }, [allSessions, sourceFilter, projectFilter, searchQuery]);
+  }, [allSessions, sourceFilter, projectFilter, rangeFilter, deferredQuery]);
 
   const anyFilter = sourceFilter !== "all" || rangeFilter !== "all" || projectFilter !== "all" || searchQuery.trim() !== "";
+
+  // Restart the rendered window whenever the result set changes, so a narrower
+  // filter doesn't leave the user scrolled into a stale slice.
+  useEffect(() => {
+    setVisibleCount(PAGE_SIZE);
+  }, [sourceFilter, projectFilter, rangeFilter, deferredQuery, allSessions]);
+
+  const visible = useMemo(() => filtered.slice(0, visibleCount), [filtered, visibleCount]);
+  const hasMore = filtered.length > visible.length;
+  const showMore = useCallback(() => setVisibleCount((n) => n + PAGE_SIZE), []);
+
+  // Auto-extend the window when the sentinel below the list scrolls into view.
+  // The button inside it stays functional (and keyboard-reachable) when
+  // IntersectionObserver is unavailable.
+  const sentinelRef = useRef(null);
+  useEffect(() => {
+    if (!hasMore || typeof IntersectionObserver === "undefined") return undefined;
+    const node = sentinelRef.current;
+    if (!node) return undefined;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) showMore();
+      },
+      { rootMargin: "400px" },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [hasMore, showMore]);
+
+  const sourceOptions = useMemo(
+    () => SOURCE_FILTERS.map((option) => ({ id: option.id, label: option.label() })),
+    [resolvedLocale],
+  );
+  const rangeOptions = useMemo(
+    () => DATE_RANGES.map((option) => ({ id: option.id, label: option.label() })),
+    [resolvedLocale],
+  );
+
+  const truncated = Number(data?.session_count) > Number(data?.returned_count);
 
   // Sessions read local Claude/Codex logs from the machine running the CLI;
   // there is no cloud source. On the deployed web app, surface the local-only
@@ -296,7 +414,7 @@ export function SessionsPage() {
           <div className="mb-2 flex flex-wrap items-center gap-2 pt-1 text-xs text-oai-gray-600 dark:text-oai-gray-300">
             <SegmentedControl
               ariaLabel={copy("sessions.filter.source_aria")}
-              options={SOURCE_FILTERS.map((option) => ({ id: option.id, label: option.label() }))}
+              options={sourceOptions}
               value={sourceFilter}
               onChange={setSourceFilter}
             />
@@ -305,10 +423,9 @@ export function SessionsPage() {
               className="pl-2"
               ariaLabel={copy("sessions.filter.range_aria")}
               leading={<Calendar className="h-3.5 w-3.5 shrink-0 text-oai-gray-400" aria-hidden />}
-              options={DATE_RANGES.map((option) => ({ id: option.id, label: option.label() }))}
+              options={rangeOptions}
               value={rangeFilter}
-              onChange={handleRangeChange}
-              disabled={refreshing || isLoading}
+              onChange={setRangeFilter}
             />
 
             <SearchableSelect
@@ -319,7 +436,6 @@ export function SessionsPage() {
               searchPlaceholder={copy("sessions.filter.project_search")}
               emptyLabel={copy("sessions.filter.project_empty")}
               ariaLabel={copy("sessions.filter.project_aria")}
-              disabled={refreshing || isLoading}
             />
 
             <div className="relative w-72 max-w-full">
@@ -354,16 +470,30 @@ export function SessionsPage() {
               </button>
             </div>
 
-            <span role="status" aria-live="polite" className="ml-auto shrink-0 tabular-nums text-oai-gray-500 dark:text-oai-gray-400">
+            <span className="ml-auto shrink-0 tabular-nums text-oai-gray-500 dark:text-oai-gray-400">
               {copy("sessions.filter.result_count", { filtered: filtered.length, total: allSessions.length })}
             </span>
           </div>
 
-          {error ? (
-            <p className="mb-4 text-sm text-red-500 dark:text-red-400">{copy("shared.error.prefix", { error })}</p>
+          {truncated ? (
+            <p className="mb-4 text-xs text-oai-gray-500 dark:text-oai-gray-400">
+              {copy("sessions.truncated", { shown: data.returned_count, total: data.session_count })}
+            </p>
           ) : null}
 
-          {isLoading ? (
+          {error && !data ? (
+            <div className="rounded-xl border border-dashed border-red-300 py-16 text-center dark:border-red-500/40">
+              <p className="text-sm font-medium text-oai-black dark:text-white">{copy("sessions.error.title")}</p>
+              <p className="mt-1 text-sm text-oai-gray-500 dark:text-oai-gray-400">{error}</p>
+              <button
+                type="button"
+                onClick={() => void load(false)}
+                className="mt-4 inline-flex h-8 items-center rounded-md border border-oai-gray-200 px-3 text-xs font-medium text-oai-gray-700 transition-colors hover:bg-oai-gray-100 hover:text-oai-black focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-oai-brand-500 dark:border-oai-gray-800 dark:text-oai-gray-200 dark:hover:bg-oai-gray-800 dark:hover:text-white"
+              >
+                {copy("sessions.error.retry")}
+              </button>
+            </div>
+          ) : isLoading ? (
             <div className="flex items-center gap-2 py-16 text-sm text-oai-gray-500 dark:text-oai-gray-400">
               <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
               {copy("sessions.loading")}
@@ -378,11 +508,27 @@ export function SessionsPage() {
               </p>
             </div>
           ) : (
-            <ul className="divide-y divide-oai-gray-200/70 dark:divide-oai-gray-800/70">
-              {filtered.map((session) => (
-                <SessionRow key={session.session_hash} session={session} />
-              ))}
-            </ul>
+            <>
+              {error ? (
+                <p className="mb-4 text-sm text-red-500 dark:text-red-400">{copy("shared.error.prefix", { error })}</p>
+              ) : null}
+              <ul className="divide-y divide-oai-gray-200/70 dark:divide-oai-gray-800/70">
+                {visible.map((session) => (
+                  <SessionRow key={session.session_hash} session={session} locale={resolvedLocale} />
+                ))}
+              </ul>
+              {hasMore ? (
+                <div ref={sentinelRef} className="flex justify-center pt-6">
+                  <button
+                    type="button"
+                    onClick={showMore}
+                    className="inline-flex h-8 items-center rounded-md border border-oai-gray-200 px-3 text-xs font-medium text-oai-gray-600 transition-colors hover:bg-oai-gray-100 hover:text-oai-black focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-oai-brand-500 dark:border-oai-gray-800 dark:text-oai-gray-300 dark:hover:bg-oai-gray-800 dark:hover:text-white"
+                  >
+                    {copy("sessions.action.load_more")}
+                  </button>
+                </div>
+              ) : null}
+            </>
           )}
 
           <p className="mt-6 text-xs text-oai-gray-400 dark:text-oai-gray-500">

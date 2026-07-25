@@ -12,6 +12,7 @@ import { computePace, resetToMs, resolveWindowSeconds } from "../../../lib/limit
 import { ProviderIcon } from "./ProviderIcon.jsx";
 import { buildResetBankRows } from "./usage-limits-reset-bank.js";
 import { PROVIDER_LIMIT_SPECS } from "./usage-limits-provider-specs.js";
+import { HoverTooltip } from "../../components/HoverTooltip.jsx";
 
 const LIMITS_PROVIDER_ICON_CLASS = "shrink-0 text-oai-black dark:text-oai-white";
 
@@ -115,24 +116,8 @@ function buildWindowHoverDetail(spec, pace, mode) {
   return lines.join("\n");
 }
 
-/**
- * Small styled hover tooltip. Positions itself above the nearest ancestor
- * that has `group relative` on it — the caller owns that wrapper so this
- * stays a plain sibling, not an extra layout-affecting box. Glass-card
- * styling matches ActivityHeatmap3D's hover tooltip (backdrop-blur + subtle
- * border + shadow-xl) for a consistent hover-surface language app-wide.
- */
-function Tooltip({ text }) {
-  if (!text) return null;
-  return (
-    <div
-      role="tooltip"
-      className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-2 w-max max-w-[260px] -translate-x-1/2 whitespace-pre-line rounded-xl border border-oai-gray-200/50 dark:border-oai-gray-800/50 bg-white/90 dark:bg-oai-gray-900/90 backdrop-blur-md px-2.5 py-1.5 text-[10.5px] leading-snug text-oai-gray-700 dark:text-oai-gray-200 shadow-xl opacity-0 transition-opacity duration-150 group-hover:opacity-100"
-    >
-      {text}
-    </div>
-  );
-}
+// Shared with the session browser; see ui/components/HoverTooltip.jsx.
+const Tooltip = HoverTooltip;
 
 function LimitBar({ label, pct, reset, mode = LIMIT_DISPLAY_MODES.USED, pacePercent = null, paceOver = false, title = null }) {
   const rawUsed = Math.max(0, Math.min(100, Number(pct) || 0));

@@ -1,7 +1,26 @@
 "use strict";
 
-// Metadata-only session analytics sidecar. This scanner deliberately never
-// persists prompts, assistant text, tool arguments, command output, or diffs.
+// Metadata-only session analytics sidecar.
+//
+// Never persisted, anywhere: prompts, assistant message bodies, tool arguments,
+// command output, diffs. Prompts are read only to fingerprint a repeated
+// request (a one-way hash, never stored).
+//
+// Persisted to the LOCAL sidecar only (~/.tokentracker/tracker, 0600 file in a
+// 0700 dir), because the session browser needs them to identify and resume a
+// session:
+//   - `title`  — the one line the agent wrote to name the session (Claude's
+//     "ai-title" record, Codex's thread_name). Agent-authored, not the user's
+//     prompt, but it does summarize what the session was about, so treat it as
+//     session content: local-only, never uploaded.
+//   - `session_id` — the vendor session UUID, needed for `--resume`.
+//   - `project_ref` — the session's working directory. The resume command only
+//     works from that directory, so the UI shows it and lets the user copy it.
+//
+// All three are stripped in summarizeSessions() before anything reaches the
+// cloud or a CSV export, and the browser endpoint that keeps them is served
+// only over loopback. `test/session-analytics.test.js` guards that boundary —
+// if you add a field here, decide which side of it the field belongs on.
 
 const crypto = require("node:crypto");
 const fs = require("node:fs");
@@ -22,7 +41,14 @@ const { computeRowCost } = require("./pricing");
 // the agent wrote itself, never the raw prompt body, and stay local-only
 // alongside session_id (no self-parsed prompt fallback, so the strict
 // metadata-only guarantee holds).
-const SIDECAR_VERSION = 8;
+// v9 changes derived metrics, so every cached row must be rebuilt:
+//   - duration_ms is now *active* time (see IDLE_GAP_MS), not the wall-clock
+//     span between the first and last log line, which read as 89 days on
+//     resumed/forked sessions.
+//   - session_id is only set when the log actually contained a sessionId
+//     record. It used to fall back to the file's basename, which produced
+//     resume commands for non-session files (`claude --resume journal`).
+const SIDECAR_VERSION = 9;
 const EDIT_TOOLS = new Set(["apply_patch", "edit", "write", "multiedit", "notebookedit"]);
 const PLACEHOLDER_MODELS = new Set(["<synthetic>", "synthetic", "<unknown>", "unknown"]);
 const CLAUDE_MEM_OBSERVER_PROJECT_SUFFIX = "--claude-mem-observer-sessions";
@@ -74,11 +100,39 @@ function safeTimestamp(value) {
   return new Date(value).toISOString();
 }
 
+// A session that was resumed days later, or whose file replays inherited
+// history from a fork, spans a wall-clock range that says nothing about how
+// long the user actually worked (observed: 2142h / 89 days on a session with
+// zero turns). Accumulate *active* time instead: the sum of gaps between
+// consecutive log timestamps, excluding any gap longer than IDLE_GAP_MS. The
+// long jump from replayed history to real work is one such gap, so it drops
+// out on its own. started_at / ended_at still carry the true span.
+const IDLE_GAP_MS = 30 * 60 * 1000;
+
+function emptyBounds() {
+  return { started_at: null, ended_at: null, active_ms: 0, _last_ts_ms: null };
+}
+
 function updateBounds(bounds, value) {
   const timestamp = safeTimestamp(value);
   if (!timestamp) return;
   if (!bounds.started_at || timestamp < bounds.started_at) bounds.started_at = timestamp;
   if (!bounds.ended_at || timestamp > bounds.ended_at) bounds.ended_at = timestamp;
+  const ms = Date.parse(timestamp);
+  if (!Number.isFinite(ms)) return;
+  if (Number.isFinite(bounds._last_ts_ms)) {
+    const delta = ms - bounds._last_ts_ms;
+    // Ignore out-of-order lines and idle gaps; only real working time counts.
+    if (delta > 0 && delta <= IDLE_GAP_MS) bounds.active_ms += delta;
+  }
+  bounds._last_ts_ms = ms;
+}
+
+// Throwaway per-agent checkouts (`.claude/worktrees/<id>`, `.codex/worktrees/…`)
+// are not the project the user is working on, and the directory is usually gone
+// by the time the session is browsed.
+function isWorktreeRef(ref) {
+  return /[\\/](worktrees|subagents)[\\/]/.test(String(ref || ""));
 }
 
 function projectKey(cwd, filePath) {
@@ -162,11 +216,9 @@ function extractCodexSignalTools(payload) {
 }
 
 function finalizeRecord(record) {
-  const startedMs = Date.parse(record.started_at || "");
-  const endedMs = Date.parse(record.ended_at || "");
-  record.duration_ms = Number.isFinite(startedMs) && Number.isFinite(endedMs)
-    ? Math.max(0, endedMs - startedMs)
-    : 0;
+  delete record._last_ts_ms;
+  record.active_ms = Math.max(0, finite(record.active_ms));
+  record.duration_ms = record.active_ms;
   record.total_tokens = finite(record.total_tokens || record.tokens?.total_tokens);
   record.cost_usd = computeRowCost({ source: record.source, model: record.model, ...record.tokens });
   record.productive = record.edit_turns > 0;
@@ -184,9 +236,26 @@ async function scanClaudeSession(filePath) {
   const input = fs.createReadStream(filePath, { encoding: "utf8" });
   const lines = readline.createInterface({ input, crlfDelay: Infinity });
   const tokens = emptyTotals();
+  // Per-file, deliberately. rollout.js persists its dedup set across files to
+  // catch cross-file duplicates, but that is only sound there because it owns a
+  // single global total. Here each file becomes an independently cached row, so
+  // a cross-file set would make a row's tokens depend on which other files were
+  // scanned first — and the incremental cache reuses rows without replaying
+  // that state. Measured cost of the per-file scope on real data: 808 assistant
+  // messages appear in more than one file (fork/resume replays history into a
+  // new session file), inflating per-session tokens by ~1.5% in aggregate.
+  // Fixing it needs a deterministic owner (e.g. earliest started_at) plus
+  // message keys persisted per row — a sidecar redesign, not a one-liner. Do
+  // NOT "fix" this by widening the set without solving the cache interaction.
   const seenMessages = new Set();
-  const bounds = { started_at: null, ended_at: null };
+  const bounds = emptyBounds();
+  // The basename keeps grouping stable for files that never write a sessionId
+  // record, but only an *observed* sessionId may become a resumable
+  // session_id — otherwise non-session logs under ~/.claude/projects (e.g.
+  // skill-injections.jsonl, journal.jsonl) yield `claude --resume journal`,
+  // a command that always fails.
   let rawSessionId = path.basename(filePath, ".jsonl");
+  let observedSessionId = null;
   let cwd = null;
   let model = "unknown";
   let aiTitle = null;
@@ -209,7 +278,10 @@ async function scanClaudeSession(filePath) {
     let obj;
     try { obj = JSON.parse(line); } catch { continue; }
     updateBounds(bounds, obj.timestamp || obj.message?.timestamp);
-    if (typeof obj.sessionId === "string" && obj.sessionId) rawSessionId = obj.sessionId;
+    if (typeof obj.sessionId === "string" && obj.sessionId) {
+      rawSessionId = obj.sessionId;
+      observedSessionId = obj.sessionId;
+    }
     if (typeof obj.cwd === "string" && obj.cwd) cwd = obj.cwd;
     // Claude writes its own generated one-line summary as an "ai-title" record.
     // It is agent-authored metadata (not the raw prompt body); keep the latest.
@@ -257,7 +329,7 @@ async function scanClaudeSession(filePath) {
   return finalizeRecord({
     version: SIDECAR_VERSION,
     session_hash: sessionHash("claude", rawSessionId),
-    session_id: rawSessionId || null,
+    session_id: observedSessionId || null,
     // Claude's own generated one-line title (the "ai-title" record). Agent-
     // authored metadata, never the raw prompt body. Local-only: stripped in
     // summarizeSessions before any cloud/CSV export. Null when Claude never
@@ -279,7 +351,7 @@ async function scanClaudeSession(filePath) {
 }
 
 async function scanCodexDeliverySignals(filePath) {
-  const bounds = { started_at: null, ended_at: null };
+  const bounds = emptyBounds();
   const input = fs.createReadStream(filePath, { encoding: "utf8" });
   const lines = readline.createInterface({ input, crlfDelay: Infinity });
   let turns = 0;
@@ -541,16 +613,32 @@ async function buildSessionAnalyticsInternal({ home = os.homedir(), force = fals
     ...discovered.claude.map((filePath) => ({ source: "claude", filePath, scan: scanClaudeSession })),
     ...discovered.codex.map((filePath) => ({ source: "codex", filePath, scan: scanCodexSession })),
   ];
+  // Files we could not turn into a row (permission denied, half-written line,
+  // vanished mid-scan). Swallowing these silently made sessions disappear with
+  // no signal at all; count them so the API can say so.
+  let skippedFiles = 0;
   for (const entry of entries) {
     const cacheKey = sessionFileCacheKey(entry.source, entry.filePath);
     const statKey = analyticsEntryStatKey(entry.source, entry.filePath);
-    if (!statKey) continue;
+    if (!statKey) {
+      skippedFiles += 1;
+      continue;
+    }
     let row = null;
     if (!force && previousFiles[cacheKey]?.stat_key === statKey) {
       row = previousRowsByFile.get(cacheKey) || null;
     }
     if (!row) {
-      try { row = await entry.scan(entry.filePath); } catch { /* one active/partial session must not poison the sidecar */ }
+      try {
+        row = await entry.scan(entry.filePath);
+      } catch (error) {
+        // One active/partial session must not poison the sidecar, but do not
+        // pretend it never existed either.
+        skippedFiles += 1;
+        if (!process.env.NODE_TEST_CONTEXT) {
+          console.warn(`[session-analytics] skipped ${entry.source} session file: ${error?.message || error}`);
+        }
+      }
     }
     if (!row) continue;
     // A one-way file hash enables incremental reuse without persisting or
@@ -570,6 +658,9 @@ async function buildSessionAnalyticsInternal({ home = os.homedir(), force = fals
     checked_at: generatedAt,
     files: nextFiles,
   })}\n`);
+  // Non-enumerable so the array still behaves exactly like a plain row list
+  // for every existing caller (map/filter/JSON of the rows is unaffected).
+  Object.defineProperty(sessions, "skippedFiles", { value: skippedFiles, enumerable: false });
   return sessions;
 }
 
@@ -582,23 +673,41 @@ const sessionAnalyticsBuilds = new Map();
 function buildSessionAnalytics(options = {}) {
   const normalizedOptions = options && typeof options === "object" ? options : {};
   const home = path.resolve(String(normalizedOptions.home || os.homedir()));
+  const force = Boolean(normalizedOptions.force);
   const existing = sessionAnalyticsBuilds.get(home);
-  if (existing) return existing;
+  // Joining an in-flight build is only correct when that build is at least as
+  // thorough as what this caller asked for. A refresh that landed while a plain
+  // build was running used to be handed the un-refreshed result: the spinner
+  // stopped and nothing had actually been re-scanned. Chain instead of joining
+  // — never run two scans at once, they race the atomic sidecar write.
+  if (existing && (!force || existing.force)) return existing.promise;
 
-  const promise = buildSessionAnalyticsInternal({ ...normalizedOptions, home });
-  sessionAnalyticsBuilds.set(home, promise);
+  const run = () => buildSessionAnalyticsInternal({ ...normalizedOptions, home, force });
+  const promise = existing ? existing.promise.then(run, run) : run();
+  const entry = { promise, force: force || Boolean(existing?.force) };
+  sessionAnalyticsBuilds.set(home, entry);
   const clear = () => {
-    if (sessionAnalyticsBuilds.get(home) === promise) sessionAnalyticsBuilds.delete(home);
+    if (sessionAnalyticsBuilds.get(home) === entry) sessionAnalyticsBuilds.delete(home);
   };
   promise.then(clear, clear);
   return promise;
 }
 
+// Does a session overlap the [from, to] day window? Testing started_at alone
+// dropped every session that began before the window and ended inside it —
+// exactly the long/resumed ones, which also sort to the top because the sort
+// key is ended_at. On real data a 7-day window lost 6 sessions, the largest
+// 224M tokens. Treat the window as an interval intersection instead.
+function withinDayRange(row, from, to) {
+  const startDay = String(row?.started_at || row?.ended_at || "").slice(0, 10);
+  const endDay = String(row?.ended_at || row?.started_at || "").slice(0, 10);
+  if (from && (!endDay || endDay < from)) return false;
+  if (to && (!startDay || startDay > to)) return false;
+  return true;
+}
+
 function summarizeSessions(sessions, { from = "", to = "", includeSessions = true } = {}) {
-  const filtered = (sessions || []).filter((row) => {
-    const day = String(row.started_at || row.ended_at || "").slice(0, 10);
-    return (!from || day >= from) && (!to || day <= to);
-  });
+  const filtered = (sessions || []).filter((row) => withinDayRange(row, from, to));
   const byModel = new Map();
   const subagents = new Map();
   for (const row of filtered) {
@@ -750,14 +859,22 @@ function mergeSessionFragments(rows) {
     cur.total_tokens = finite(cur.total_tokens) + finite(row.total_tokens);
     cur.cost_usd = finite(cur.cost_usd) + finite(row.cost_usd);
     cur.productive = Boolean(cur.productive) || Boolean(row.productive);
+    cur.active_ms = finite(cur.active_ms) + finite(row.active_ms);
     if (!cur.title && row.title) cur.title = row.title;
     // Representative model/project comes from the busiest fragment (most
     // tokens) so a tiny sidechain cannot overwrite the real coding model.
     if (finite(row.total_tokens) > finite(cur._repr_tokens)) {
       cur._repr_tokens = finite(row.total_tokens);
       if (row.model && row.model !== "unknown") cur.model = row.model;
-      cur.project_key = row.project_key;
-      cur.project_ref = row.project_ref;
+      // Project needs its own guard: a subagent running in a git worktree has
+      // that throwaway directory as its cwd, so the busiest fragment can label
+      // the whole session with a temp name like "agent-a3cb8089a11d3471a" and
+      // point project_ref at a directory that no longer exists. Only let a
+      // worktree fragment name the session when nothing better is available.
+      if (!isWorktreeRef(row.project_ref) || isWorktreeRef(cur.project_ref)) {
+        cur.project_key = row.project_key;
+        cur.project_ref = row.project_ref;
+      }
     }
     if (row.started_at && (!cur.started_at || row.started_at < cur.started_at)) cur.started_at = row.started_at;
     if (row.ended_at && (!cur.ended_at || row.ended_at > cur.ended_at)) cur.ended_at = row.ended_at;
@@ -765,9 +882,9 @@ function mergeSessionFragments(rows) {
   const merged = [];
   for (const row of byHash.values()) {
     delete row._repr_tokens;
-    const startedMs = Date.parse(row.started_at || "");
-    const endedMs = Date.parse(row.ended_at || "");
-    row.duration_ms = Number.isFinite(startedMs) && Number.isFinite(endedMs) ? Math.max(0, endedMs - startedMs) : 0;
+    // Active time is additive across fragments (see IDLE_GAP_MS); the
+    // wall-clock span between first and last line is not.
+    row.duration_ms = finite(row.active_ms);
     row.first_pass = finite(row.edit_turns) === 1 && finite(row.retry_turns) === 0;
     row.one_shot = row.first_pass;
     merged.push(row);
@@ -780,10 +897,14 @@ function mergeSessionFragments(rows) {
 // the UI can offer one-click resume. Callers must only expose it over the
 // local API.
 function listSessionsForBrowser(sessions, { from = "", to = "", limit = 0 } = {}) {
-  const filtered = mergeSessionFragments(sessions).filter((row) => {
-    const day = String(row.started_at || row.ended_at || "").slice(0, 10);
-    return (!from || day >= from) && (!to || day <= to);
-  });
+  const filtered = mergeSessionFragments(sessions)
+    // Only sessions that actually spent tokens are worth listing. This drops
+    // two kinds of noise: non-session logs under ~/.claude/projects
+    // (skill-injections.jsonl, journal.jsonl, …), and sessions abandoned before
+    // the model replied. Both render as "unknown · 0 tokens · $0.00" rows with
+    // no model, no cost and nothing to analyze.
+    .filter((row) => finite(row.total_tokens) > 0)
+    .filter((row) => withinDayRange(row, from, to));
   filtered.sort((a, b) => String(b.ended_at || "").localeCompare(String(a.ended_at || "")));
   const cap = Number(limit) > 0 ? Number(limit) : 0;
   const limited = cap > 0 ? filtered.slice(0, cap) : filtered;
@@ -791,6 +912,7 @@ function listSessionsForBrowser(sessions, { from = "", to = "", limit = 0 } = {}
     available: filtered.length > 0,
     session_count: filtered.length,
     returned_count: limited.length,
+    skipped_files: finite(sessions?.skippedFiles),
     sessions: limited.map(toSessionBrowserRow),
     provenance: {
       source: "local-session-log",

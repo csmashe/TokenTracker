@@ -261,6 +261,8 @@ flowchart LR
 | `TOKENTRACKER_DEBUG` | 打开 debug 日志（`1` 表示打开） | — |
 | `TOKENTRACKER_NO_TELEMETRY` | 关闭全部匿名遥测——每日心跳与 dashboard 分析（`1` 表示关闭；同样尊重 `DO_NOT_TRACK` 标准） | — |
 | `TOKENTRACKER_HTTP_TIMEOUT_MS` | HTTP 超时时间（毫秒） | `20000` |
+| `TOKENTRACKER_DISABLE_GIT_ATTRIBUTION` | 关闭 Git 提交归因（设为 `1` 关闭）。归因会在每个近期会话的工作目录里执行 `git log`。关闭后 TokenTracker 完全不会进入你的项目目录（Outcomes 页只显示手动记录的结果） | — |
+| `TOKENTRACKER_GIT_ATTRIBUTION_PROTECTED_DIRS` | 允许 Git 归因进入 macOS 受保护目录（设为 `1` 允许）。默认会跳过 `~/Documents`、`~/Downloads`、`~/Desktop`、`~/Library`、影片/音乐/图片以及 `/Volumes` 下的会话，因为 macOS 会为每个位置单独弹一次访问授权提示。只有当你确实把仓库放在这些目录、且不介意授权时才需要开启 | — |
 | `CODEX_HOME` | 覆盖 Codex CLI 目录 | `~/.codex` |
 | `GEMINI_HOME` | 覆盖 Gemini CLI 目录 | `~/.gemini` |
 | `TOKENTRACKER_GROK_HOME` | 覆盖 Grok Build 目录，供 Grok 集成和 Skills Manager 使用 | `~/.grok` |

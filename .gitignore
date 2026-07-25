@@ -93,30 +93,13 @@ scratch/
 # Local InsForge MCP config (contains full-access API_KEY — never commit)
 dashboard/.mcp.json
 
-# Security ops scripts & audit reports: ignored by default (vuln details / lockdown SQL —
-# never commit to public repo). Only the whitelisted public schema/RPC/validator files
-# below are tracked; add a `!scripts/ops/<file>` line before tracking anything new.
+# Security ops scripts & audit reports: NEVER tracked. This directory holds
+# lockdown SQL, incident forensics, anti-cheat thresholds and other material
+# whose contents are useful to an attacker. The previous per-file whitelist was
+# removed 2026-07-25 -- do not reintroduce `!scripts/ops/<file>` exceptions.
+# Anything that genuinely must ship with the repo (a validator the build runs,
+# a schema a test asserts on) belongs outside scripts/ops, not on a whitelist.
 scripts/ops/*
-!scripts/ops/account-usage-grouped-rpc.sql
-!scripts/ops/billable-total-tokens-migration.sql
-!scripts/ops/leaderboard-refresh-lock.sql
-!scripts/ops/leaderboard-rollup-daily.sql
-!scripts/ops/leaderboard-snapshot-retention.sql
-!scripts/ops/leaderboard-usage-grouped-rpc.sql
-!scripts/ops/pr-retro.cjs
-!scripts/ops/pricing-sync-health.sql
-!scripts/ops/tokentracker-device-machine-cluster.sql
-!scripts/ops/tokentracker-hourly-device-dedup.sql
-!scripts/ops/tokentracker-hourly-mirror-row-dedup.sql
-!scripts/ops/tokentracker-profile-likes-schema.sql
-!scripts/ops/tokentracker-restore-20260617.sql
-!scripts/ops/ui-hardcode-baseline.json
-!scripts/ops/usage-daily-rollup-backfill.sql
-!scripts/ops/usage-daily-rollup-rollback.sql
-!scripts/ops/usage-daily-rollup.sql
-!scripts/ops/user-badges.sql
-!scripts/ops/validate-ui-hardcode-lib.cjs
-!scripts/ops/validate-ui-hardcode.cjs
 
 # Local working notes (todo / lessons — not part of the repo)
 tasks/

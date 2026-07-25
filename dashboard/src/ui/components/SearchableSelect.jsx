@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from "react";
+import React, { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Popover } from "@base-ui/react/popover";
 import { Check, ChevronDown, Folder, Search as SearchIcon } from "lucide-react";
 import { cn } from "../../lib/cn";
@@ -37,7 +37,9 @@ export function SearchableSelect({
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const inputRef = useRef(null);
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const listRef = useRef(null);
+  const listId = `${useId()}-listbox`;
 
   const selectedLabel = value === allValue
     ? allLabel
@@ -49,10 +51,49 @@ export function SearchableSelect({
     [options, query_],
   );
 
+  // One flat list of selectable rows: the "all" reset entry, then the matches.
+  // Arrow keys walk it; -1 means nothing is highlighted yet.
+  const rows = useMemo(
+    () => [{ value: allValue, label: allLabel }, ...filtered],
+    [allValue, allLabel, filtered],
+  );
+  const activeRow = activeIndex >= 0 && activeIndex < rows.length ? rows[activeIndex] : null;
+
   const select = (next) => {
     onChange(next);
     setOpen(false);
     setQuery("");
+    setActiveIndex(-1);
+  };
+
+  // Keep the highlighted row scrolled into view while navigating by keyboard.
+  useEffect(() => {
+    if (!open) return;
+    // Optional call: jsdom does not implement scrollIntoView.
+    listRef.current?.querySelector('[data-active="true"]')?.scrollIntoView?.({ block: "nearest" });
+  }, [open, activeIndex]);
+
+  const handleKeyDown = (event) => {
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const down = event.key === "ArrowDown";
+      setActiveIndex((prev) => {
+        const count = rows.length;
+        if (!count) return -1;
+        if (down) return prev >= count - 1 ? 0 : prev + 1;
+        return prev <= 0 ? count - 1 : prev - 1;
+      });
+      return;
+    }
+    if (event.key === "Enter") {
+      // Commit the highlighted row, or the top match once the user has typed.
+      // Enter on a freshly-opened dropdown must do nothing — it used to select
+      // whichever project happened to sort first.
+      const target = activeRow || (query_ && filtered.length ? filtered[0] : null);
+      if (!target) return;
+      event.preventDefault();
+      select(target.value);
+    }
   };
 
   return (
@@ -60,6 +101,7 @@ export function SearchableSelect({
       open={open}
       onOpenChange={(next) => {
         setOpen(next);
+        setActiveIndex(-1);
         if (!next) setQuery("");
       }}
     >
@@ -84,31 +126,37 @@ export function SearchableSelect({
             <div className="relative mb-1">
               <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-oai-gray-400" aria-hidden />
               <input
-                ref={inputRef}
                 type="text"
+                role="combobox"
+                aria-expanded
+                aria-controls={listId}
+                aria-activedescendant={activeRow ? `${listId}-${activeIndex}` : undefined}
                 value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && filtered.length) {
-                    event.preventDefault();
-                    select(filtered[0].value);
-                  }
+                onChange={(event) => {
+                  setQuery(event.target.value);
+                  setActiveIndex(-1);
                 }}
+                onKeyDown={handleKeyDown}
                 placeholder={searchPlaceholder}
                 className="h-8 w-full rounded border border-oai-gray-200 bg-transparent pl-8 pr-2 text-xs text-oai-black outline-none placeholder:text-oai-gray-400 focus:border-oai-gray-400 dark:border-oai-gray-800 dark:text-white dark:focus:border-oai-gray-500"
               />
             </div>
-            <div className="max-h-64 overflow-y-auto">
-              <button type="button" onClick={() => select(allValue)} className={cn(ITEM_CLASS, value === allValue && "bg-oai-gray-100 dark:bg-oai-gray-800")}>
-                <span className="flex-1 truncate">{allLabel}</span>
-                {value === allValue ? <Check className="h-3.5 w-3.5 shrink-0" aria-hidden /> : null}
-              </button>
-              {filtered.map((option) => (
+            <div ref={listRef} id={listId} role="listbox" aria-label={ariaLabel} className="max-h-64 overflow-y-auto">
+              {rows.map((option, index) => (
                 <button
                   key={option.value}
+                  id={`${listId}-${index}`}
                   type="button"
+                  role="option"
+                  aria-selected={value === option.value}
+                  data-active={index === activeIndex ? "true" : undefined}
+                  onMouseEnter={() => setActiveIndex(index)}
                   onClick={() => select(option.value)}
-                  className={cn(ITEM_CLASS, value === option.value && "bg-oai-gray-100 dark:bg-oai-gray-800")}
+                  className={cn(
+                    ITEM_CLASS,
+                    value === option.value && "bg-oai-gray-100 dark:bg-oai-gray-800",
+                    index === activeIndex && "ring-1 ring-inset ring-oai-gray-300 dark:ring-oai-gray-600",
+                  )}
                 >
                   <span className="flex-1 truncate">{option.label}</span>
                   {value === option.value ? <Check className="h-3.5 w-3.5 shrink-0" aria-hidden /> : null}

@@ -19,6 +19,40 @@ function buildEveryCodeNotifyCmd(notifyPath, options) {
   return [...buildCodexNotifyCmd(notifyPath, options), "--source=every-code"];
 }
 
+// Is this notify command one we wrote? Strict array equality is not a safe
+// test, because the command is not a stable constant across invocations:
+//   - argv[0] on Windows is an absolute `process.execPath` (#361). The desktop
+//     app runs the bundled EmbeddedServer\node.exe, `tokentracker` in a
+//     terminal runs the system / nvm Node, and an nvm version switch moves it
+//     again. All three write a different argv[0] on the same machine.
+//   - the notify.cjs path itself varies with binDir (npm global vs embedded).
+// Under strict equality our own command reads as a stranger's: `status` reports
+// the integration as not configured (pushing the user to re-run setup), and
+// `uninstall` skips it as `current-not-managed`, leaving a dead notify entry
+// that points at a deleted app directory and fails on every Codex turn.
+// Match on the notify.cjs tail instead — the path must live under
+// ~/.tokentracker/, and the args after it must match so the Codex command is
+// never confused with the Every Code one (`--source=every-code`).
+function isManagedNotifyCmd(cmd, expectedNotify) {
+  if (!Array.isArray(cmd)) return false;
+  if (arraysEqual(cmd, expectedNotify)) return true;
+
+  const notifyIndexOf = (parts) =>
+    parts.findIndex(
+      (part) =>
+        typeof part === "string" && part.replace(/\\/g, "/").endsWith("notify.cjs"),
+    );
+
+  const index = notifyIndexOf(cmd);
+  if (index === -1) return false;
+  if (!cmd[index].replace(/\\/g, "/").includes("/.tokentracker/")) return false;
+
+  if (!Array.isArray(expectedNotify)) return true;
+  const expectedIndex = notifyIndexOf(expectedNotify);
+  if (expectedIndex === -1) return true;
+  return arraysEqual(cmd.slice(index + 1), expectedNotify.slice(expectedIndex + 1));
+}
+
 async function upsertNotify({
   configPath,
   notifyCmd,
@@ -41,13 +75,19 @@ async function upsertNotify({
     // Persist original notify once (for uninstall + chaining). When a caller
     // asks to replace the stored original and the config has no notify, record
     // that absence so uninstall does not resurrect a stale backup.
-    const hasExistingNotify = Array.isArray(existingNotify);
-    if (captureOriginal && (hasExistingNotify || replaceOriginal)) {
+    // A command of ours that merely went stale (different argv[0] / binDir —
+    // see isManagedNotifyCmd) is NOT the user's original: recording it would
+    // make uninstall "restore" our own dead command forever. Treat it as an
+    // absence instead. Reachable when the backup file is gone but the config
+    // entry is not, e.g. after the user deletes ~/.tokentracker.
+    const hasForeignNotify =
+      Array.isArray(existingNotify) && !isManagedNotifyCmd(existingNotify, notifyCmd);
+    if (captureOriginal && (hasForeignNotify || replaceOriginal)) {
       await ensureDir(path.dirname(notifyOriginalPath));
       const existing = await readJson(notifyOriginalPath);
       if (replaceOriginal || !existing) {
         await writeJson(notifyOriginalPath, {
-          notify: hasExistingNotify ? existingNotify : null,
+          notify: hasForeignNotify ? existingNotify : null,
           capturedAt: new Date().toISOString(),
         });
       }
@@ -75,7 +115,7 @@ async function restoreNotify({ configPath, notifyOriginalPath, expectedNotify })
     return { restored: false, skippedReason: "no-backup-not-installed" };
   }
 
-  if (expectedNotify && !arraysEqual(currentNotify, expectedNotify)) {
+  if (expectedNotify && !isManagedNotifyCmd(currentNotify, expectedNotify)) {
     return { restored: false, skippedReason: "current-not-managed" };
   }
 
@@ -497,6 +537,7 @@ function arraysEqual(a, b) {
 module.exports = {
   buildCodexNotifyCmd,
   buildEveryCodeNotifyCmd,
+  isManagedNotifyCmd,
   upsertNotify,
   restoreNotify,
   loadNotifyOriginal,

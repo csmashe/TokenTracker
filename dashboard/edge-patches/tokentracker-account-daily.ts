@@ -98,6 +98,8 @@ async function verifiedUserIdFromJwt(authHeader: string | null): Promise<string 
 const MODEL_PRICING: Record<string, { input: number; output: number; cache_read: number; cache_write?: number }> = {
   // ── Anthropic Claude ──
   "claude-fable-5": { input: 10, output: 50, cache_read: 1, cache_write: 12.5 },
+  "claude-opus-5": { input: 5, output: 25, cache_read: 0.5, cache_write: 6.25 },
+  "claude-opus-5-fast": { input: 10, output: 50, cache_read: 1, cache_write: 12.5 },
   "claude-opus-4-6": { input: 5, output: 25, cache_read: 0.5, cache_write: 6.25 },
   "claude-opus-4-5-20250414": { input: 5, output: 25, cache_read: 0.5, cache_write: 6.25 },
   "claude-sonnet-5": { input: 3, output: 15, cache_read: 0.3, cache_write: 3.75 },
@@ -263,6 +265,10 @@ function getModelPricing(model: string) {
   if (exact) return exact;
   const lower = model.toLowerCase();
   if (lower.includes("fable")) return MODEL_PRICING["claude-fable-5"];
+  // Opus 5 fast mode bills at 2x the standard Opus tier ($10/$50), so the
+  // -fast matcher must precede both the opus-5 and the generic opus fallback.
+  if (lower.includes("opus-5-fast")) return MODEL_PRICING["claude-opus-5-fast"];
+  if (lower.includes("opus-5")) return MODEL_PRICING["claude-opus-5"];
   if (lower.includes("opus")) return MODEL_PRICING["claude-opus-4-6"];
   if (lower.includes("haiku")) return MODEL_PRICING["claude-haiku-4-5-20251001"];
   if (lower.includes("sonnet")) return MODEL_PRICING["claude-sonnet-4-6"];

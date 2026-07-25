@@ -40,9 +40,15 @@ New-Item -ItemType Directory -Force -Path $EmbedDir | Out-Null
 # 1. Download Node.js win-x64
 $zipName = "node-v$NodeVersion-win-x64.zip"
 $url = "https://nodejs.org/dist/v$NodeVersion/$zipName"
-$tmp = Join-Path ([System.IO.Path]::GetTempPath()) "ttnode-$NodeVersion"
-if (Test-Path $tmp) { Remove-Item -Recurse -Force $tmp }
-New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+
+# Use cache directory if available (CI caches pinned Node.js downloads)
+$cacheDir = $env:NODE_CACHE_DIR
+$tmp = if ($cacheDir -and (Test-Path $cacheDir)) { $cacheDir } else {
+    $t = Join-Path ([System.IO.Path]::GetTempPath()) "ttnode-$NodeVersion"
+    if (Test-Path $t) { Remove-Item -Recurse -Force $t }
+    New-Item -ItemType Directory -Force -Path $t | Out-Null
+    $t
+}
 $zipPath = Join-Path $tmp $zipName
 
 # Invoke-WebRequest is dramatically slower and more failure-prone on large files
@@ -54,12 +60,37 @@ $sumsPath = Join-Path $tmp 'SHASUMS256.txt'
 # Download + verify against Node.js's official SHASUMS256.txt, with retries: a
 # transient/partial download yields a checksum mismatch, so re-fetch rather than
 # failing the whole release on one flaky CI download.
+# Skip download if cached zip already exists and passes checksum.
 $maxAttempts = 4
 $verified = $false
-for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+
+if (Test-Path $zipPath) {
+    # Attempt to verify cached file first
+    $sumsPath = Join-Path $tmp 'SHASUMS256.txt'
+    try {
+        if (-not (Test-Path $sumsPath)) {
+            Invoke-WebRequest -Uri "https://nodejs.org/dist/v$NodeVersion/SHASUMS256.txt" -OutFile $sumsPath
+        }
+        $expectedHash = (Select-String -Path $sumsPath -Pattern ([regex]::Escape($zipName)) |
+            Select-Object -First 1).Line.Split(' ')[0]
+        $actualHash = (Get-FileHash -Path $zipPath -Algorithm SHA256).Hash
+        if ($expectedHash -and ($actualHash -eq $expectedHash.ToUpper())) {
+            Write-Host "Using cached Node.js v$NodeVersion (checksum verified)"
+            $verified = $true
+        } else {
+            Write-Host "Cached file checksum mismatch, re-downloading..."
+            Remove-Item -Force $zipPath
+        }
+    } catch {
+        Write-Warning "Cache verification failed: $($_.Exception.Message)"
+        if (Test-Path $zipPath) { Remove-Item -Force $zipPath }
+    }
+}
+for ($attempt = 1; $attempt -le $maxAttempts -and (-not $verified); $attempt++) {
     try {
         Write-Host "Downloading Node.js v$NodeVersion (win-x64)... (attempt $attempt/$maxAttempts)"
         Invoke-WebRequest -Uri $url -OutFile $zipPath
+        $sumsPath = Join-Path $tmp 'SHASUMS256.txt'
         Invoke-WebRequest -Uri "https://nodejs.org/dist/v$NodeVersion/SHASUMS256.txt" -OutFile $sumsPath
         $expectedHash = (Select-String -Path $sumsPath -Pattern ([regex]::Escape($zipName)) |
             Select-Object -First 1).Line.Split(' ')[0]

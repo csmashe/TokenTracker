@@ -66,20 +66,50 @@ NODE_BASE_URL="https://nodejs.org/dist/v${NODE_VERSION}"
 ARM64_TAR="node-v${NODE_VERSION}-darwin-arm64.tar.gz"
 X64_TAR="node-v${NODE_VERSION}-darwin-x64.tar.gz"
 
+# Use cache directory if available (CI caches pinned Node.js downloads)
+CACHE_DIR="${NODE_CACHE_DIR:-}"
+if [[ -n "$CACHE_DIR" ]]; then
+  mkdir -p "$CACHE_DIR"
+fi
+
 if [[ "$TARGET_ARCH" == "arm64" ]]; then
   echo "⬇️  Downloading Node.js v${NODE_VERSION} (arm64 only)..."
-  curl -fSL --progress-bar -o "$TMPDIR_BUNDLE/$ARM64_TAR" "$NODE_BASE_URL/$ARM64_TAR"
+  if [[ -n "$CACHE_DIR" && -f "$CACHE_DIR/$ARM64_TAR" ]]; then
+    echo "  (using cached $ARM64_TAR)"
+    cp "$CACHE_DIR/$ARM64_TAR" "$TMPDIR_BUNDLE/$ARM64_TAR"
+  else
+    curl -fSL --progress-bar -o "$TMPDIR_BUNDLE/$ARM64_TAR" "$NODE_BASE_URL/$ARM64_TAR"
+    [[ -n "$CACHE_DIR" ]] && cp "$TMPDIR_BUNDLE/$ARM64_TAR" "$CACHE_DIR/$ARM64_TAR"
+  fi
   tar -xzf "$TMPDIR_BUNDLE/$ARM64_TAR" -C "$TMPDIR_BUNDLE" "node-v${NODE_VERSION}-darwin-arm64/bin/node"
   cp "$TMPDIR_BUNDLE/node-v${NODE_VERSION}-darwin-arm64/bin/node" "$EMBED_DIR/node"
 elif [[ "$TARGET_ARCH" == "x64" ]]; then
   echo "⬇️  Downloading Node.js v${NODE_VERSION} (x64 only)..."
-  curl -fSL --progress-bar -o "$TMPDIR_BUNDLE/$X64_TAR" "$NODE_BASE_URL/$X64_TAR"
+  if [[ -n "$CACHE_DIR" && -f "$CACHE_DIR/$X64_TAR" ]]; then
+    echo "  (using cached $X64_TAR)"
+    cp "$CACHE_DIR/$X64_TAR" "$TMPDIR_BUNDLE/$X64_TAR"
+  else
+    curl -fSL --progress-bar -o "$TMPDIR_BUNDLE/$X64_TAR" "$NODE_BASE_URL/$X64_TAR"
+    [[ -n "$CACHE_DIR" ]] && cp "$TMPDIR_BUNDLE/$X64_TAR" "$CACHE_DIR/$X64_TAR"
+  fi
   tar -xzf "$TMPDIR_BUNDLE/$X64_TAR" -C "$TMPDIR_BUNDLE" "node-v${NODE_VERSION}-darwin-x64/bin/node"
   cp "$TMPDIR_BUNDLE/node-v${NODE_VERSION}-darwin-x64/bin/node" "$EMBED_DIR/node"
 else
   echo "⬇️  Downloading Node.js v${NODE_VERSION} (arm64 + x64)..."
-  curl -fSL --progress-bar -o "$TMPDIR_BUNDLE/$ARM64_TAR" "$NODE_BASE_URL/$ARM64_TAR"
-  curl -fSL --progress-bar -o "$TMPDIR_BUNDLE/$X64_TAR"   "$NODE_BASE_URL/$X64_TAR"
+  if [[ -n "$CACHE_DIR" && -f "$CACHE_DIR/$ARM64_TAR" ]]; then
+    echo "  (using cached $ARM64_TAR)"
+    cp "$CACHE_DIR/$ARM64_TAR" "$TMPDIR_BUNDLE/$ARM64_TAR"
+  else
+    curl -fSL --progress-bar -o "$TMPDIR_BUNDLE/$ARM64_TAR" "$NODE_BASE_URL/$ARM64_TAR"
+    [[ -n "$CACHE_DIR" ]] && cp "$TMPDIR_BUNDLE/$ARM64_TAR" "$CACHE_DIR/$ARM64_TAR"
+  fi
+  if [[ -n "$CACHE_DIR" && -f "$CACHE_DIR/$X64_TAR" ]]; then
+    echo "  (using cached $X64_TAR)"
+    cp "$CACHE_DIR/$X64_TAR" "$TMPDIR_BUNDLE/$X64_TAR"
+  else
+    curl -fSL --progress-bar -o "$TMPDIR_BUNDLE/$X64_TAR"   "$NODE_BASE_URL/$X64_TAR"
+    [[ -n "$CACHE_DIR" ]] && cp "$TMPDIR_BUNDLE/$X64_TAR" "$CACHE_DIR/$X64_TAR"
+  fi
   tar -xzf "$TMPDIR_BUNDLE/$ARM64_TAR" -C "$TMPDIR_BUNDLE" "node-v${NODE_VERSION}-darwin-arm64/bin/node"
   tar -xzf "$TMPDIR_BUNDLE/$X64_TAR"   -C "$TMPDIR_BUNDLE" "node-v${NODE_VERSION}-darwin-x64/bin/node"
   echo "🔗 Creating universal binary with lipo..."

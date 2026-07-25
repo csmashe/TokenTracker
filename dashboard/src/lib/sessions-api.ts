@@ -1,6 +1,8 @@
 // Local-only session browser client. The backing endpoint retains the raw
 // session id and local project path so the dashboard can offer one-click
 // resume; it is never served from the cloud account view.
+import { copy } from "./copy";
+
 const SLUG = "tokentracker-sessions";
 
 export type SessionSource = "claude" | "codex";
@@ -57,7 +59,14 @@ export async function getSessions(options: FetchOptions = {}): Promise<SessionsR
   });
   const payload = await response.json().catch(() => null);
   if (!response.ok) {
-    const err = new Error(payload?.error || `Request failed with HTTP ${response.status}`) as Error & {
+    // A 404 here means the local server predates this endpoint — i.e. a desktop
+    // app whose bundled EmbeddedServer is older than the dashboard it hosts.
+    // "HTTP 404" tells the user nothing actionable; "update the app" does.
+    const fallback =
+      response.status === 404
+        ? copy("sessions.error.outdated_app")
+        : `Request failed with HTTP ${response.status}`;
+    const err = new Error(payload?.error || fallback) as Error & {
       status?: number;
     };
     err.status = response.status;

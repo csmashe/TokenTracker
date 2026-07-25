@@ -9,6 +9,11 @@ on:
         description: "Version to release (e.g. 0.31.1)"
         required: true
         type: string
+      no_cache:
+        description: "Disable all caches (rollback switch)"
+        required: false
+        type: boolean
+        default: false
   # Reusable: the macOS "release DMG" workflow calls this so a single dispatch
   # ships both platforms to the same vX.Y.Z release (see release-dmg.yml).
   workflow_call:
@@ -16,6 +21,10 @@ on:
       version:
         required: true
         type: string
+      no_cache:
+        required: false
+        type: boolean
+        default: false
 
 concurrency:
   # Per-version group so the macOS-triggered call and a stray manual dispatch
@@ -39,6 +48,8 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 20
+          cache: ${{ inputs.no_cache && '' || 'npm' }}
+          cache-dependency-path: dashboard/package-lock.json
 
       - uses: actions/setup-dotnet@v6
         with:
@@ -70,7 +81,7 @@ jobs:
       # Vite inlines empty strings — breaks the leaderboard fetch and disables
       # cloud OAuth. `dashboard/.env.local` is gitignored so CI cannot read it.
       - name: Install dashboard dependencies
-        run: npm ci --prefix dashboard
+        run: npm ci --prefix dashboard --no-audit --no-fund
 
       - name: Build dashboard
         env:
@@ -83,11 +94,28 @@ jobs:
 
       # 2. Bundle EmbeddedServer (pinned Node.js win-x64 + tokentracker source +
       # the dashboard/dist built above) so the .exe is self-contained.
+      - name: Cache Node.js binary for EmbeddedServer
+        if: ${{ !inputs.no_cache }}
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}\ttnode-22.22.2
+          key: node-win-x64-22.22.2
+
       - name: Bundle EmbeddedServer
+        env:
+          NODE_CACHE_DIR: ${{ runner.temp }}\ttnode-22.22.2
         run: powershell -ExecutionPolicy Bypass -File TokenTrackerWin/scripts/bundle-node.ps1
 
       # 3. Publish a self-contained win-x64 build (bundles the .NET 8 runtime, so
       # end users do NOT need to install the .NET Desktop Runtime first).
+      - name: Cache NuGet packages
+        if: ${{ !inputs.no_cache }}
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('TokenTrackerWin/TokenTrackerWin.csproj') }}
+          restore-keys: nuget-${{ runner.os }}-
+
       - name: Publish app
         run: dotnet publish TokenTrackerWin/TokenTrackerWin.csproj -c Release -r win-x64 --self-contained true -o TokenTrackerWin/publish
 

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-07-24T15:17:23.210Z",
+  "generatedAt": "2026-07-24T21:10:59.192Z",
   "root": "dashboard/src",
   "rules": {
     "colors": "hex/rgb(a) literals",
@@ -7,7 +7,7 @@
   },
   "totals": {
     "colors": 377,
-    "rawText": 155
+    "rawText": 158
   },
   "files": {
     "dashboard/src/components/InsforgeUserHeaderControls.jsx": {
@@ -140,9 +140,10 @@
     },
     "dashboard/src/pages/SessionsPage.jsx": {
       "colors": 0,
-      "rawText": 1,
+      "rawText": 2,
       "rawTextTokens": [
-        ") : filtered.length === 0 ? ("
+        ") : filtered.length === 0 ? (",
+        ") : isLoading ? ("
       ]
     },
     "dashboard/src/pages/SkillDetailPanel.jsx": {
@@ -252,8 +253,11 @@
     },
     "dashboard/src/ui/components/SearchableSelect.jsx": {
       "colors": 2,
-      "rawText": 0,
-      "rawTextTokens": []
+      "rawText": 2,
+      "rawTextTokens": [
+        "= 0 && activeIndex",
+        "= count - 1 ? 0 : prev + 1; return prev"
+      ]
     },
     "dashboard/src/ui/components/SegmentedControl.jsx": {
       "colors": 0,

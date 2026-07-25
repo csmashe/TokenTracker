@@ -7,6 +7,11 @@ on:
         description: "Version to release (e.g. 0.5.25)"
         required: true
         type: string
+      no_cache:
+        description: "Disable all caches (rollback switch)"
+        required: false
+        type: boolean
+        default: false
 
 concurrency:
   group: release-dmg
@@ -141,6 +146,8 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 20
+          cache: ${{ inputs.no_cache && '' || 'npm' }}
+          cache-dependency-path: dashboard/package-lock.json
 
       # Verify version matches package.json AND TokenTrackerBar/project.yml.
       # Skipping the project.yml check once shipped v0.5.77 as a DMG whose
@@ -169,7 +176,7 @@ jobs:
 
       # 1. Build dashboard
       - name: Install dashboard dependencies
-        run: npm ci --prefix dashboard
+        run: npm ci --prefix dashboard --no-audit --no-fund
 
       # InsForge URL + anon key are public client-side values (shipped in every
       # dashboard bundle). They MUST be present at build time or Vite inlines
@@ -183,10 +190,28 @@ jobs:
         run: npm run dashboard:build
 
       # 2. Bundle EmbeddedServer (Node.js + tokentracker source)
+      - name: Cache Node.js binaries for EmbeddedServer
+        if: ${{ !inputs.no_cache }}
+        uses: actions/cache@v4
+        with:
+          path: /tmp/node-cache
+          key: node-darwin-universal-22.22.2
+
       - name: Bundle EmbeddedServer
+        env:
+          NODE_CACHE_DIR: /tmp/node-cache
         run: bash TokenTrackerBar/scripts/bundle-node.sh
 
       # 3. Generate Xcode project
+      - name: Cache Homebrew bottles
+        if: ${{ !inputs.no_cache }}
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Caches/Homebrew/downloads
+            ~/Library/Caches/Homebrew/api
+          key: homebrew-${{ runner.os }}-xcodegen-create-dmg
+
       - name: Install xcodegen
         run: brew install xcodegen
 
@@ -329,6 +354,7 @@ jobs:
     uses: ./.github/workflows/release-windows.yml
     with:
       version: ${{ inputs.version }}
+      no_cache: ${{ inputs.no_cache }}
 
   # Flip the draft live ONLY after BOTH platforms finished uploading, so the
   # release appears complete and atomically — releases/latest stays on the

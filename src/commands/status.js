@@ -6,7 +6,12 @@ const pkg = require("../../package.json");
 
 const { readJson } = require("../lib/fs");
 const { readCursorStateSummary } = require("../lib/cursor-store");
-const { readCodexNotify, readEveryCodeNotify, buildCodexNotifyCmd } = require("../lib/codex-config");
+const {
+  readCodexNotify,
+  readEveryCodeNotify,
+  buildCodexNotifyCmd,
+  isManagedNotifyCmd,
+} = require("../lib/codex-config");
 const {
   isClaudeHookConfigured,
   areClaudeUsageHooksConfigured,
@@ -153,7 +158,10 @@ async function cmdStatus(argv = []) {
   );
 
   const codexNotify = await readCodexNotify(codexConfigPath);
-  const notifyConfigured = arraysEqual(codexNotify, codexNotifyCmd);
+  // Not arraysEqual: argv[0] and binDir differ between the desktop app and a
+  // terminal `tokentracker` run, so a correctly-installed integration would
+  // otherwise report as not configured. See isManagedNotifyCmd.
+  const notifyConfigured = isManagedNotifyCmd(codexNotify, codexNotifyCmd);
   const everyCodeNotify = await readEveryCodeNotify(codeConfigPath);
   const everyCodeConfigured =
     Array.isArray(everyCodeNotify) && everyCodeNotify.length > 0;
@@ -950,13 +958,6 @@ function parseArgs(argv) {
   }
 
   return out;
-}
-
-function arraysEqual(a, b) {
-  if (!Array.isArray(a) || !Array.isArray(b)) return false;
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
-  return true;
 }
 
 // Pure renderer: turn the structured summary into a fixed-width ASCII table.

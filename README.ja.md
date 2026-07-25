@@ -259,6 +259,8 @@ flowchart LR
 | `TOKENTRACKER_DEBUG` | デバッグ出力を有効化（`1` で有効） | — |
 | `TOKENTRACKER_NO_TELEMETRY` | すべての匿名テレメトリ（日次ハートビート + ダッシュボード分析）を無効化（`1` で無効。`DO_NOT_TRACK` 標準にも対応） | — |
 | `TOKENTRACKER_HTTP_TIMEOUT_MS` | HTTP タイムアウト（ミリ秒） | `20000` |
+| `TOKENTRACKER_DISABLE_GIT_ATTRIBUTION` | Git コミットの紐付けを無効化（`1` で無効）。紐付けは各セッションの作業ディレクトリ内で `git log` を実行します。無効にすると TokenTracker はプロジェクトディレクトリに一切入りません（Outcomes は手動記録分のみ表示） | — |
+| `TOKENTRACKER_GIT_ATTRIBUTION_PROTECTED_DIRS` | Git 紐付けが macOS の保護された場所に入ることを許可（`1` で許可）。既定では `~/Documents`、`~/Downloads`、`~/Desktop`、`~/Library`、メディアフォルダ、`/Volumes` 配下のセッションをスキップします。macOS は場所ごとに個別のアクセス許可ダイアログを出すためです。これらの場所にリポジトリを置いており、許可しても構わない場合のみ有効化してください | — |
 | `CODEX_HOME` | Codex CLI ディレクトリの上書き | `~/.codex` |
 | `GEMINI_HOME` | Gemini CLI ディレクトリの上書き | `~/.gemini` |
 

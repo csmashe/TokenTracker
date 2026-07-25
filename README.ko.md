@@ -259,6 +259,8 @@ flowchart LR
 | `TOKENTRACKER_DEBUG` | 디버그 출력 활성화 (`1`로 활성화) | — |
 | `TOKENTRACKER_NO_TELEMETRY` | 모든 익명 텔레메트리(일일 하트비트 + 대시보드 분석) 비활성화 (`1`로 비활성화, `DO_NOT_TRACK` 표준도 지원) | — |
 | `TOKENTRACKER_HTTP_TIMEOUT_MS` | HTTP 타임아웃 (밀리초) | `20000` |
+| `TOKENTRACKER_DISABLE_GIT_ATTRIBUTION` | Git 커밋 연결 비활성화(`1`이면 비활성화). 연결 기능은 각 세션의 작업 디렉터리에서 `git log`를 실행합니다. 비활성화하면 TokenTracker가 프로젝트 디렉터리에 전혀 접근하지 않습니다(Outcomes에는 수동 기록만 표시) | — |
+| `TOKENTRACKER_GIT_ATTRIBUTION_PROTECTED_DIRS` | Git 연결이 macOS 보호 위치에 접근하도록 허용(`1`이면 허용). 기본적으로 `~/Documents`, `~/Downloads`, `~/Desktop`, `~/Library`, 미디어 폴더, `/Volumes` 아래의 세션은 건너뜁니다. macOS가 위치마다 별도의 접근 허용 대화상자를 띄우기 때문입니다. 해당 위치에 저장소를 두고 있고 권한을 허용해도 괜찮을 때만 켜세요 | — |
 | `CODEX_HOME` | Codex CLI 디렉토리 오버라이드 | `~/.codex` |
 | `GEMINI_HOME` | Gemini CLI 디렉토리 오버라이드 | `~/.gemini` |
 

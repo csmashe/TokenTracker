@@ -80,12 +80,53 @@ test("leaderboard refresh fetches all user metadata with one RPC", () => {
 test("signed-in users cannot trigger expensive month, total, or all-period leaderboard refreshes", () => {
   const source = read("dashboard/edge-patches/tokentracker-leaderboard-refresh.ts");
   const clientSource = read("dashboard/src/lib/cloud-sync.ts");
-  assert.match(source, /type RefreshAuthorization = "privileged" \| "signed-in";/u);
+  assert.match(
+    source,
+    /type RefreshAuthorization = "privileged" \| "signed-in" \| "public";/u,
+  );
   assert.match(
     source,
     /if \(authorization === "signed-in" && body\.period !== "week"\)\s*return json\(\{ error: "signed-in users may only refresh week" \}, 403\);/u,
   );
   assert.match(clientSource, /body: JSON\.stringify\(\{ period: "week", source \}\)/u);
+});
+
+test("the unauthenticated anomaly summary cannot reach any refresh write path", () => {
+  const source = read("dashboard/edge-patches/tokentracker-leaderboard-refresh.ts");
+
+  // "public" is granted without any credential, so it must be reachable only by
+  // a GET carrying ?anomalies=1 -- never by the POST that rebuilds snapshots.
+  assert.match(
+    source,
+    /req\.method === "GET" &&\s*new URL\(req\.url\)\.searchParams\.get\("anomalies"\) === "1"/u,
+    "the public role must be gated on GET + ?anomalies=1",
+  );
+  assert.match(
+    source,
+    /const authorization = wantsAnomalySummary \? "public" : await authorizeRefresh\(req\);/u,
+    "any non-summary request must still go through authorizeRefresh",
+  );
+
+  // The summary must return before the period-refresh work begins.
+  const summaryReturn = source.indexOf('if (authorization === "public") return await anomalyQueueSummary(client);');
+  const periodLoop = source.indexOf("for (const period of periods)");
+  assert.ok(summaryReturn > 0, "public role must short-circuit to the summary");
+  assert.ok(
+    periodLoop > summaryReturn,
+    "the public short-circuit must precede the refresh loop",
+  );
+
+  // The summary must not leak identities into the public GitHub issue the
+  // watchdog files from this payload.
+  const summaryBody = source.slice(
+    source.indexOf("async function anomalyQueueSummary"),
+    source.indexOf("export default async function"),
+  );
+  assert.doesNotMatch(
+    summaryBody,
+    /user_id/u,
+    "anomaly summary must expose counts only, never flagged user ids",
+  );
 });
 
 test("leaderboard reads expose snapshot freshness and disable response caching", () => {
