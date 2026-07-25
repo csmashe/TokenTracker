@@ -46,6 +46,18 @@ function flattenHookEntries(entries) {
   return entries.flatMap((entry) => (Array.isArray(entry?.hooks) ? entry.hooks : [entry]));
 }
 
+test("notify handler hides detached background sync windows on Windows", () => {
+  const source = buildNotifyHandler({
+    trackerDir: path.join(os.tmpdir(), "tokentracker-notify-windows-hide"),
+    packageName: "tokentracker-cli",
+  });
+
+  assert.match(
+    source,
+    /cp\.spawn\(argv\[0\], argv\.slice\(1\), \{[\s\S]*?detached: true,[\s\S]*?windowsHide: true,[\s\S]*?stdio: 'ignore'/,
+  );
+});
+
 async function runGeneratedNotifyHandler({ trackerDir, notify, args = ["--source=codex", "turn-ended"] }) {
   await fs.mkdir(trackerDir, { recursive: true });
   const notifyPath = path.join(trackerDir, "notify.cjs");

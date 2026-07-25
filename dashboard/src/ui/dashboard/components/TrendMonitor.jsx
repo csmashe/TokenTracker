@@ -1,12 +1,17 @@
 import React from "react";
 import { motion, useReducedMotion } from "motion/react";
 import { Maximize2 } from "lucide-react";
-import { copy } from "../../../lib/copy";
+import { copy, getCopyLocale } from "../../../lib/copy";
 import { cn } from "../../../lib/cn";
 import { useCurrency } from "../../../hooks/useCurrency.js";
 import { useTokenFormat } from "../../../hooks/useTokenFormat.js";
 import { formatUsdCurrency } from "../../../lib/format";
-import { formatBucketRange, formatTickLabel, granularityFromPeriod } from "../../../lib/trend-stats";
+import {
+  formatBucketRange,
+  formatTickLabel,
+  formatTrendRange,
+  granularityFromPeriod,
+} from "../../../lib/trend-stats";
 import { TrendMonitorZoomModal } from "./TrendMonitorZoomModal";
 
 function interpolateQuantile(sortedValues, ratio) {
@@ -178,7 +183,9 @@ const PREVIEW_OPACITY = 0.35;
 const BASELINE_HEIGHT_PX = 2;
 const PREVIEW_MIN_HEIGHT_PX = 4;
 
-function TrendBar({
+// Memoized so hover state in the parent (tooltip) doesn't re-render every
+// bar on each mouseenter/mouseleave — props are all stable across hovers.
+const TrendBar = React.memo(function TrendBar({
   value,
   displayValue,
   scale,
@@ -240,6 +247,7 @@ function TrendBar({
           /* 占位/预测/真实零：单色背景条 */
           <div
             data-trend-bar="true"
+            data-trend-kind={kind}
             className={cn(
               "h-full w-full group-hover:brightness-110 transition-all",
               kind === "real" ? "" : "bg-oai-gray-100 dark:bg-oai-gray-800",
@@ -271,7 +279,7 @@ function TrendBar({
       </div>
     </motion.div>
   );
-}
+});
 
 // Extract numeric tokens from a row, or null if the row carries no observation
 // (missing/future, no field, or non-finite). Real zeros stay as `0` — they are
@@ -388,6 +396,10 @@ export function TrendMonitor({
     () => (Array.isArray(rows) && rows.length ? rows : []),
     [rows],
   );
+  const hasPredictions = React.useMemo(
+    () => series.some((row) => row?.future),
+    [series],
+  );
 
   // rawValues: real observations (incl. 0) pass through; missing/future are null.
   // seriesValues: zero-padded view used for y-axis scaling so gaps don't skew the max.
@@ -406,6 +418,11 @@ export function TrendMonitor({
   const { currency, rate } = useCurrency();
   const { formatTokens, formatTokensTooltip } = useTokenFormat();
   const granularity = granularityFromPeriod(period);
+  const locale = getCopyLocale();
+  const rangeLabels = React.useMemo(
+    () => formatTrendRange(from, to, granularity, locale),
+    [from, granularity, locale, to],
+  );
 
   const [hoveredBar, setHoveredBar] = React.useState(null);
   const [tooltipPos, setTooltipPos] = React.useState({ x: 0, y: 0, shiftX: 0, flipDown: false });
@@ -413,15 +430,13 @@ export function TrendMonitor({
   const containerRef = React.useRef(null);
   const hideTimeoutRef = React.useRef(null);
 
-  const handleBarMouseEnter = (e, row, value, segments, kind, displayValue) => {
+  const handleBarMouseEnter = React.useCallback((e, row, value, segments, kind, displayValue) => {
     if (hideTimeoutRef.current) {
       clearTimeout(hideTimeoutRef.current);
       hideTimeoutRef.current = null;
     }
 
-    const timeLabel = isZoom
-      ? formatBucketRange(row, granularity)
-      : row?.day || row?.hour || row?.month || "";
+    const timeLabel = formatBucketRange(row, granularity, locale);
     setHoveredBar({
       row,
       value,
@@ -461,14 +476,14 @@ export function TrendMonitor({
     const flipDown = y < estTooltipHeight + 12;
 
     setTooltipPos({ x, y, shiftX, flipDown });
-  };
+  }, [isZoom, granularity, locale]);
 
-  const handleBarMouseLeave = () => {
+  const handleBarMouseLeave = React.useCallback(() => {
     if (hideTimeoutRef.current) clearTimeout(hideTimeoutRef.current);
     hideTimeoutRef.current = setTimeout(() => {
       setHoveredBar(null);
     }, 150);
-  };
+  }, []);
 
   return (
     <div
@@ -542,7 +557,9 @@ export function TrendMonitor({
               })
             ) : (
               <div className="flex-1 h-full flex items-center justify-center">
-                <p className="text-sm text-oai-gray-400 dark:text-oai-gray-400">No data yet</p>
+                <p className="text-sm text-oai-gray-400 dark:text-oai-gray-400">
+                  {copy("trend.monitor.empty")}
+                </p>
               </div>
             )}
           </div>
@@ -560,7 +577,7 @@ export function TrendMonitor({
                 <div key={index} className={cn("flex-1 min-w-0 flex", justify)}>
                   {isTick && (
                     <span className="text-[9px] text-oai-gray-400 dark:text-oai-gray-500 whitespace-nowrap font-mono">
-                      {formatTickLabel(row, granularity)}
+                      {formatTickLabel(row, granularity, locale)}
                     </span>
                   )}
                 </div>
@@ -569,10 +586,23 @@ export function TrendMonitor({
           </div>
         )}
 
-        {from && to && (
+        {hasPredictions && (
+          <div
+            className="flex items-center justify-end gap-1.5 text-[10px] font-medium text-oai-gray-400 dark:text-oai-gray-500"
+            data-trend-prediction-legend="true"
+          >
+            <span
+              aria-hidden="true"
+              className="h-2.5 w-3 rounded-[2px] bg-oai-gray-100 dark:bg-oai-gray-800 opacity-50"
+            />
+            <span>~ {copy("trend.monitor.predicted")}</span>
+          </div>
+        )}
+
+        {rangeLabels && (
           <div className="flex justify-between text-xs text-oai-gray-500 dark:text-oai-gray-300 font-medium pt-2 border-t border-oai-gray-100 dark:border-oai-gray-800">
-            <span>{from === to ? `${from} 00:00` : from}</span>
-            <span>{from === to ? `${to} 24:00` : to}</span>
+            <span>{rangeLabels.start}</span>
+            <span>{rangeLabels.end}</span>
           </div>
         )}
       </div>
@@ -603,12 +633,12 @@ export function TrendMonitor({
               </span>
               {hoveredBar.kind === "predicted" && (
                 <span className="text-[9px] font-semibold uppercase tracking-wider text-oai-gray-400 dark:text-oai-gray-500">
-                  Predicted
+                  {copy("trend.monitor.predicted")}
                 </span>
               )}
               {hoveredBar.kind === "unsynced" && (
                 <span className="text-[9px] font-semibold uppercase tracking-wider text-oai-gray-400 dark:text-oai-gray-500">
-                  Unsynced
+                  {copy("trend.monitor.unsynced")}
                 </span>
               )}
             </div>
@@ -625,7 +655,7 @@ export function TrendMonitor({
                     : formatTokens(hoveredBar.value)}
                 </span>
                 <span className="text-[10px] text-oai-gray-400 uppercase tracking-wider font-semibold">
-                  Tokens
+                  {copy("heatmap.unit.tokens")}
                 </span>
               </div>
 
@@ -655,7 +685,9 @@ export function TrendMonitor({
               {hoveredBar.segments && hoveredBar.segments.length > 0 ? (
                 <div className="mt-1.5 border-t border-oai-gray-100 dark:border-oai-gray-800/60 pt-2 flex flex-col gap-1.5">
                   <div className="text-[10px] font-semibold text-oai-gray-400 dark:text-oai-gray-500 uppercase tracking-wider">
-                    {hoveredBar.segments[0].type === "model" ? "Model Breakdown" : "Token Breakdown"}
+                    {hoveredBar.segments[0].type === "model"
+                      ? copy("heatmap.tooltip.model_breakdown")
+                      : copy("heatmap.tooltip.token_breakdown")}
                   </div>
                   <div className="flex flex-col gap-2 max-h-[150px] overflow-y-auto pr-1.5 oai-scrollbar">
                     {hoveredBar.segments.map(({ name, value: val, type }) => {

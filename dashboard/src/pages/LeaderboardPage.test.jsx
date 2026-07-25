@@ -144,6 +144,31 @@ describe("LeaderboardPage window-session cache reuse", () => {
     expect(tokenCell.className).not.toContain("dark:group-hover:bg-oai-gray-900/60");
   });
 
+  it("renders snapshot freshness as a readable localized date instead of raw ISO", () => {
+    const generatedAt = "2026-07-20T01:20:43.517Z";
+    const contextKey = getLeaderboardPreloadContextKey({
+      accessMode: "cloud",
+      baseUrl: "https://edge.example",
+      mockEnabled: false,
+      userId: "user-1",
+    });
+    publishLeaderboardPreloadState(
+      { ...preloadedData, generated_at: generatedAt },
+      { contextKey },
+    );
+    getLeaderboard.mockReturnValue(new Promise(() => {}));
+
+    const { container } = renderLeaderboard();
+    const updatedAt = container.querySelector(`time[datetime="${generatedAt}"]`);
+
+    expect(updatedAt).not.toBeNull();
+    expect(updatedAt.textContent).not.toContain(generatedAt);
+    expect(updatedAt.textContent).not.toContain("T01:20:43.517Z");
+    expect(updatedAt.title).not.toContain(generatedAt);
+    expect(updatedAt.className).toContain("text-oai-gray-500");
+    expect(updatedAt.className).toContain("dark:text-oai-gray-400");
+  });
+
   it("keeps the pinned me-row rank cell sticky (twMerge must not drop it, issue 265)", () => {
     const contextKey = getLeaderboardPreloadContextKey({
       accessMode: "cloud",
@@ -262,7 +287,7 @@ describe("LeaderboardPage window-session cache reuse", () => {
       userId: "user-1",
     });
     publishLeaderboardPreloadState(preloadedData, { contextKey });
-    getLeaderboard.mockRejectedValue(new Error("network down"));
+    getLeaderboard.mockRejectedValueOnce(new Error("network down"));
 
     renderLeaderboard();
 
@@ -281,7 +306,10 @@ describe("LeaderboardPage window-session cache reuse", () => {
       mockEnabled: false,
       userId: "user-1",
     });
-    getLeaderboard.mockRejectedValue(new Error("network down"));
+    // Keep the rejection scoped to the request asserted below. A permanent
+    // rejecting mock can be reached by a delayed cleanup/preload from another
+    // test and becomes an unhandled rejection in the full suite.
+    getLeaderboard.mockRejectedValueOnce(new Error("network down"));
 
     renderLeaderboard();
 

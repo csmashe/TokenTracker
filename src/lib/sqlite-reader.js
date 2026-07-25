@@ -33,6 +33,7 @@ function warnSqliteUnavailable({ dbPath, label, cliError, nodeSqliteError, env, 
 function readSqliteRowsWithCli(dbPath, sql, { execFileSync, timeout, maxBuffer, readOnly }) {
   const args = readOnly ? ["-readonly", "-json", dbPath, sql] : ["-json", dbPath, sql];
   const raw = execFileSync("sqlite3", args, {
+    windowsHide: true,
     encoding: "utf8",
     maxBuffer,
     timeout,
@@ -129,6 +130,7 @@ function readSqliteJsonRows(dbPath, sql, options = {}) {
 async function readSqliteRowsWithCliAsync(dbPath, sql, { execFile, timeout, maxBuffer, readOnly }) {
   const args = readOnly ? ["-readonly", "-json", dbPath, sql] : ["-json", dbPath, sql];
   const { stdout } = await execFile("sqlite3", args, {
+    windowsHide: true,
     encoding: "utf8",
     maxBuffer,
     timeout,

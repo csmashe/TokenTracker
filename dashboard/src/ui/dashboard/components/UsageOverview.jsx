@@ -1,6 +1,26 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { motion, useReducedMotion } from "motion/react";
 import { Info, Loader2, SquareArrowOutUpRight } from "lucide-react";
+
+// Solid (fill-based) monochrome all-tools mark — matches the fill-based
+// mono provider icons, unlike lucide's stroke-only Layers3. Drawn bold and
+// edge-to-edge so it reads at the same visual weight as the sibling marks.
+function AllToolsIcon({ size = 15, className = "" }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M12 1.6 23 7.4 12 13.2 1 7.4 12 1.6Z" />
+      <path d="m4 10.3-3 1.5 11 5.5 11-5.5-3-1.5-8 4-8-4Z" opacity="0.72" />
+      <path d="m4 14.6-3 1.5 11 5.5 11-5.5-3-1.5-8 4-8-4Z" opacity="0.45" />
+    </svg>
+  );
+}
 import { Popover } from "@base-ui/react/popover";
 import { Card, Button, Counter } from "../../components";
 import { Select } from "../../components/Select.jsx";
@@ -13,7 +33,11 @@ import { formatProviderDisplayName } from "../../../lib/provider-display";
 import { DateRangePopover, formatDateShort, getDateFnsLocale } from "./DateRangePopover.jsx";
 import { ProviderIcon } from "./ProviderIcon.jsx";
 import { formatUsdCurrency } from "../../../lib/format";
+import { buildAllModels } from "../../../lib/model-breakdown";
 import { ContextBreakdownPanel } from "./ContextBreakdownPanel.jsx";
+
+const ALL_PROVIDERS_KEY = "__all__";
+const FULL_SHARE_LABEL = `${(100).toFixed(2)}%`;
 
 function formatPositiveTokens(formatter, value) {
   const n = Number(value);
@@ -222,6 +246,7 @@ export function UsageOverview({
       el.scrollIntoView({ block: "nearest", inline: "center" });
     }
   }, [period]);
+  // Nothing is expanded by default; every card toggles open/closed.
   const [expandedProvider, setExpandedProvider] = useState(null);
   const { resolvedTheme } = useTheme();
   const { currency, rate } = useCurrency();
@@ -232,6 +257,12 @@ export function UsageOverview({
 
   const showSummarySkeleton = summaryLoading && !hasSummary;
   const showProviderSkeleton = providersLoading && !fleetData.some(hasProviderModels);
+
+  // A new time/device scope collapses back to the card grid — drill-down
+  // stays an explicit user action rather than a forced default.
+  useEffect(() => {
+    setExpandedProvider(null);
+  }, [period, from, to, selectedDevice]);
 
   const handleTablistKeyDown = (event) => {
     if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
@@ -273,6 +304,17 @@ export function UsageOverview({
 
   // FleetData is already grouped by provider.
   const providers = fleetData.filter((f) => f.models?.length > 0);
+  const allModels = useMemo(() => buildAllModels(fleetData), [fleetData]);
+  const allUsage = allModels.reduce((sum, model) => sum + (Number(model.usage) || 0), 0);
+  const allCost = providers.reduce((sum, provider) => sum + (Number(provider.usd) || 0), 0);
+  const activeProvider =
+    expandedProvider == null
+      ? null
+      : expandedProvider === ALL_PROVIDERS_KEY || providers.some(function matchesExpandedProvider(provider) {
+          return provider.label === expandedProvider;
+        })
+        ? expandedProvider
+        : null;
 
   return (
     <Card className={className}>
@@ -464,9 +506,42 @@ export function UsageOverview({
             {/* Provider Cards — responsive grid keeps cells equal-width so the
                 last row never stretches when the count doesn't divide evenly. */}
             <div className="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-3">
+              <button
+                type="button"
+                aria-expanded={activeProvider === ALL_PROVIDERS_KEY}
+                aria-controls="provider-details-all"
+                aria-label={copy("usage.overview.all_tools_card_aria", {
+                  tokens: formatPositiveTokens(formatTokens, allUsage) || String(0),
+                  cost: formatCost(allCost, currency, rate) || `${getCurrencySymbol(currency)}0`,
+                  count: allModels.length,
+                })}
+                onClick={() =>
+                  setExpandedProvider(
+                    activeProvider === ALL_PROVIDERS_KEY ? null : ALL_PROVIDERS_KEY,
+                  )
+                }
+                className={`min-w-0 text-left p-3 rounded-lg border transition-colors duration-200 ${
+                  activeProvider === ALL_PROVIDERS_KEY
+                    ? "border-oai-gray-300 dark:border-oai-gray-600 bg-oai-gray-50 dark:bg-oai-gray-800"
+                    : "border-oai-gray-200 dark:border-oai-gray-700 hover:border-oai-gray-300 dark:hover:border-oai-gray-600"
+                }`}
+              >
+                <div className="flex items-center gap-1.5 mb-1 min-w-0">
+                  <AllToolsIcon size={15} className="shrink-0 text-oai-brand dark:text-oai-white" />
+                  <span className="text-sm font-medium text-oai-black dark:text-oai-white truncate">
+                    {copy("usage.overview.all_tools")}
+                  </span>
+                </div>
+                <div className="text-lg font-semibold text-oai-black dark:text-oai-white tabular-nums">
+                  {FULL_SHARE_LABEL}
+                </div>
+                <div className="mt-0.5 text-[11px] text-oai-gray-400 dark:text-oai-gray-400 tabular-nums">
+                  {copy("usage.overview.model_count", { count: allModels.length })}
+                </div>
+              </button>
               {providers.map((provider, idx) => {
                 const color = getProviderColor(provider.label, idx);
-                const isExpanded = expandedProvider === provider.label;
+                const isExpanded = activeProvider === provider.label;
                 const displayLabel = formatProviderDisplayName(provider.label);
                 const percentLabel = formatProviderPercent(provider);
 
@@ -504,18 +579,30 @@ export function UsageOverview({
               })}
             </div>
 
-            {/* Expanded Provider Details */}
-            {expandedProvider && (
+            {/* A card toggles its details region; collapsed by default. (Two
+                sibling && guards, not a nested ternary — the ui-hardcode
+                scanner reads `) : x ? (` fragments as raw JSX text.) */}
+            {activeProvider === ALL_PROVIDERS_KEY && (
               <div
-                id={`provider-details-${expandedProvider}`}
+                id="provider-details-all"
+                role="region"
+                aria-label={copy("usage.overview.all_models")}
+                className="mt-2"
+              >
+                <AllModelsSection models={allModels} />
+              </div>
+            )}
+            {activeProvider != null && activeProvider !== ALL_PROVIDERS_KEY && (
+              <div
+                id={`provider-details-${activeProvider}`}
                 role="region"
                 aria-label={copy("usage.overview.model_details_aria", {
-                  provider: expandedProvider,
+                  provider: activeProvider,
                 })}
                 className="mt-2"
               >
                 {providers
-                  .filter((p) => p.label === expandedProvider)
+                  .filter((p) => p.label === activeProvider)
                   .map((provider) => {
                     const color = getProviderColor(provider.label, 0);
                     const contextSource = resolveContextBreakdownSource(provider);
@@ -552,9 +639,80 @@ export function UsageOverview({
 // Renders a single expanded provider section. Hosts loading state for the
 // inline Context Breakdown so the spinner can sit next to the heading instead
 // of taking its own row.
-function ProviderExpandedSection({ provider, color, providerHeading, contextSource, from, to, sortedModels }) {
+function ModelUsageRows({ models, color }) {
   const { currency, rate } = useCurrency();
   const { formatTokens, formatTokensTooltip } = useTokenFormat();
+
+  return (
+    <div className="space-y-3">
+      {models.map((model) => {
+        const tokensLabel = formatPositiveTokens(formatTokens, model.usage);
+        const costLabel = formatCost(model.cost, currency, rate);
+        const clampedShare = Math.max(0, Math.min(100, Number(model.share) || 0));
+        return (
+          <div key={model.id || model.name} data-model-rank-row>
+            <div className="grid grid-cols-[minmax(0,1fr)_minmax(8rem,max-content)_minmax(5.5rem,max-content)_4rem] items-baseline gap-x-3 mb-1.5">
+              <span
+                className="col-start-1 row-start-1 min-w-0 text-sm text-oai-gray-700 dark:text-oai-gray-300 truncate"
+                title={model.name}
+              >
+                {model.name}
+              </span>
+              <span
+                title={formatTokensTooltip(model.usage)}
+                className="col-start-2 row-start-1 text-right whitespace-nowrap text-sm text-oai-gray-500 dark:text-oai-gray-400 tabular-nums"
+              >
+                {tokensLabel}
+              </span>
+              <span className="col-start-3 row-start-1 text-right whitespace-nowrap text-sm text-oai-gray-500 dark:text-oai-gray-400 tabular-nums">
+                {costLabel}
+              </span>
+              <span className="col-start-4 row-start-1 text-right whitespace-nowrap text-sm text-oai-black dark:text-oai-white tabular-nums">
+                {model.share}%
+              </span>
+            </div>
+            <div
+              className="h-[3px] bg-oai-gray-100 dark:bg-oai-gray-800 rounded-full overflow-hidden"
+              role="progressbar"
+              aria-valuenow={clampedShare}
+              aria-valuemin={0}
+              aria-valuemax={100}
+            >
+              <div
+                className="h-full transition-[width] duration-500 ease-out"
+                style={{
+                  width: `${clampedShare}%`,
+                  backgroundColor: color,
+                  opacity: 0.45,
+                }}
+              />
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function AllModelsSection({ models }) {
+  return (
+    <div>
+      <div className="mb-1.5 flex items-center gap-1.5">
+        <AllToolsIcon size={14} className="shrink-0 text-oai-brand dark:text-oai-white" />
+        <span className="text-sm font-medium text-oai-black dark:text-oai-white">
+          {copy("usage.overview.all_models")}
+        </span>
+      </div>
+      <p className="mb-4 text-[11px] leading-snug text-oai-gray-500 dark:text-oai-gray-400">
+        {copy("usage.overview.all_models_note")}
+      </p>
+      <ModelUsageRows models={models} color="var(--oai-blue)" />
+    </div>
+  );
+}
+
+function ProviderExpandedSection({ provider, color, providerHeading, contextSource, from, to, sortedModels }) {
+  const { formatTokens } = useTokenFormat();
   const [breakdownLoading, setBreakdownLoading] = useState(false);
   const isAntigravity =
     String(provider?.source || provider?.label || "").trim().toLowerCase() === "antigravity";
@@ -623,53 +781,7 @@ function ProviderExpandedSection({ provider, color, providerHeading, contextSour
                         ) : null}
 
                         {/* Model rows — text line + thin muted bar as visual rhythm */}
-                        <div className="space-y-3">
-                          {sortedModels.map((model) => {
-                            const tokensLabel = formatPositiveTokens(formatTokens, model.usage);
-                            const costLabel = formatCost(model.cost, currency, rate);
-                            const clampedShare = Math.max(0, Math.min(100, Number(model.share) || 0));
-                            return (
-                              <div key={model.id || model.name}>
-                                <div className="grid grid-cols-[minmax(0,1fr)_minmax(8rem,max-content)_minmax(5.5rem,max-content)_4rem] items-baseline gap-x-3 mb-1.5">
-                                  <span
-                                    className="col-start-1 row-start-1 min-w-0 text-sm text-oai-gray-700 dark:text-oai-gray-300 truncate"
-                                    title={model.name}
-                                  >
-                                    {model.name}
-                                  </span>
-                                  <span
-                                    title={formatTokensTooltip(model.usage)}
-                                    className="col-start-2 row-start-1 text-right whitespace-nowrap text-sm text-oai-gray-500 dark:text-oai-gray-400 tabular-nums"
-                                  >
-                                    {tokensLabel}
-                                  </span>
-                                  <span className="col-start-3 row-start-1 text-right whitespace-nowrap text-sm text-oai-gray-500 dark:text-oai-gray-400 tabular-nums">
-                                    {costLabel}
-                                  </span>
-                                  <span className="col-start-4 row-start-1 text-right whitespace-nowrap text-sm text-oai-black dark:text-oai-white tabular-nums">
-                                    {model.share}%
-                                  </span>
-                                </div>
-                                <div
-                                  className="h-[3px] bg-oai-gray-100 dark:bg-oai-gray-800 rounded-full overflow-hidden"
-                                  role="progressbar"
-                                  aria-valuenow={clampedShare}
-                                  aria-valuemin={0}
-                                  aria-valuemax={100}
-                                >
-                                  <div
-                                    className="h-full transition-[width] duration-500 ease-out"
-                                    style={{
-                                      width: `${clampedShare}%`,
-                                      backgroundColor: color,
-                                      opacity: 0.45,
-                                    }}
-                                  />
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
+                        <ModelUsageRows models={sortedModels} color={color} />
                       </div>
   );
 }

@@ -31,6 +31,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         if Self.userInitiatedQuit { return .terminateNow }
+        // Only downgrade an explicit Cmd+Q keypress to a window-close. System
+        // shutdown/restart/logout arrives with no current event and must be
+        // allowed through, otherwise macOS reports the app as blocking shutdown.
+        guard let event = NSApp.currentEvent,
+              event.type == .keyDown,
+              event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
+              event.charactersIgnoringModifiers?.lowercased() == "q"
+        else { return .terminateNow }
         // Switch to accessory BEFORE closing the window so the Dock icon drops
         // immediately; otherwise AppKit delays the update until focus changes.
         NSApp.setActivationPolicy(.accessory)

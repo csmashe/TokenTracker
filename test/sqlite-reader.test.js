@@ -7,6 +7,7 @@ const { test } = require("node:test");
 const {
   readSqliteFirstValue,
   readSqliteJsonRows,
+  readSqliteJsonRowsAsync,
   resetSqliteReaderWarningsForTests,
 } = require("../src/lib/sqlite-reader");
 
@@ -20,9 +21,10 @@ function tempDbPath() {
 test("readSqliteJsonRows uses sqlite3 CLI first", () => {
   const dbPath = tempDbPath();
   const rows = readSqliteJsonRows(dbPath, "SELECT 1 AS n", {
-    execFileSync(cmd, args) {
+    execFileSync(cmd, args, options) {
       assert.equal(cmd, "sqlite3");
       assert.deepEqual(args, ["-json", dbPath, "SELECT 1 AS n"]);
+      assert.equal(options.windowsHide, true);
       return JSON.stringify([{ n: 1 }]);
     },
     requireFn() {
@@ -31,6 +33,23 @@ test("readSqliteJsonRows uses sqlite3 CLI first", () => {
   });
 
   assert.deepEqual(rows, [{ n: 1 }]);
+});
+
+test("readSqliteJsonRowsAsync hides the sqlite3 console window on Windows", async () => {
+  const dbPath = tempDbPath();
+  const rows = await readSqliteJsonRowsAsync(dbPath, "SELECT 3 AS n", {
+    async execFile(cmd, args, options) {
+      assert.equal(cmd, "sqlite3");
+      assert.deepEqual(args, ["-json", dbPath, "SELECT 3 AS n"]);
+      assert.equal(options.windowsHide, true);
+      return { stdout: JSON.stringify([{ n: 3 }]) };
+    },
+    requireFn() {
+      throw new Error("node:sqlite should not be used");
+    },
+  });
+
+  assert.deepEqual(rows, [{ n: 3 }]);
 });
 
 test("readSqliteJsonRows falls back to node:sqlite when sqlite3 CLI fails", () => {

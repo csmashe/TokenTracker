@@ -111,4 +111,71 @@ final class WeeklyLimitResetDetectorTests: XCTestCase {
         XCTAssertEqual(readings.first?.usedPercent, 80)
         XCTAssertEqual(readings.first?.resetAt, 1000)
     }
+
+    func testReadingsIncludeZCodeAndOpenCodeGoWindows() throws {
+        let json = """
+        {
+          "fetched_at": "2026-07-22T00:00:00Z",
+          "claude": { "configured": false, "error": null },
+          "codex": { "configured": false, "error": null },
+          "cursor": { "configured": false, "error": null },
+          "gemini": { "configured": false, "error": null },
+          "kiro": { "configured": false, "error": null },
+          "antigravity": { "configured": false, "error": null },
+          "zcode": {
+            "configured": true,
+            "error": null,
+            "plan_kind": "coding-plan",
+            "primary_window": { "used_percent": 24, "reset_at": "2026-07-22T05:00:00Z" },
+            "secondary_window": { "used_percent": 35, "reset_at": "2026-07-29T00:00:00Z" },
+            "tertiary_window": { "used_percent": 9, "reset_at": "2026-07-23T00:00:00Z" }
+          },
+          "opencodeGo": {
+            "configured": true,
+            "error": null,
+            "primary_window": { "used_percent": 10, "reset_at": "2026-07-22T05:00:00Z" },
+            "secondary_window": { "used_percent": 20, "reset_at": "2026-07-29T00:00:00Z" },
+            "tertiary_window": { "used_percent": 30, "reset_at": "2026-08-22T00:00:00Z" }
+          }
+        }
+        """
+        let response = try JSONDecoder().decode(UsageLimitsResponse.self, from: Data(json.utf8))
+        let readings = response.limitWindowReadings()
+
+        XCTAssertEqual(
+            readings.map { "\($0.provider).\($0.windowLabel)" },
+            ["zcode.5h", "zcode.Weekly", "zcode.Tools", "opencodeGo.5h", "opencodeGo.Weekly", "opencodeGo.Monthly"]
+        )
+    }
+
+    func testCelebrationProviderIconMappingsCoverAssetAndSVGProviders() {
+        XCTAssertEqual(LimitResetProviderIconCatalog.assetName(for: "claude"), "ClaudeLogo")
+        XCTAssertEqual(LimitResetProviderIconCatalog.assetName(for: "antigravity"), "AntigravityLogo")
+        XCTAssertEqual(LimitResetProviderIconCatalog.svgFilename(for: "cursor"), "cursor.svg")
+        XCTAssertNil(LimitResetProviderIconCatalog.assetName(for: "cursor"))
+        XCTAssertEqual(LimitResetProviderIconCatalog.svgFilename(for: "kimi"), "kimi.svg")
+        XCTAssertEqual(LimitResetProviderIconCatalog.svgFilename(for: "opencodeGo"), "opencode.svg")
+        XCTAssertNil(LimitResetProviderIconCatalog.assetName(for: "unknown"))
+        XCTAssertNil(LimitResetProviderIconCatalog.svgFilename(for: "unknown"))
+    }
+
+    func testToastAndConfettiPreferencesAreIndependentAndDefaultOn() {
+        let suiteName = "WeeklyLimitResetDetectorTests.\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            return XCTFail("Could not create isolated UserDefaults suite")
+        }
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        XCTAssertTrue(WeeklyLimitResetDetector.toastEnabled(defaults))
+        XCTAssertTrue(WeeklyLimitResetDetector.confettiEnabled(defaults))
+
+        defaults.set(false, forKey: WeeklyLimitResetDetector.confettiEnabledKey)
+        XCTAssertTrue(WeeklyLimitResetDetector.toastEnabled(defaults))
+        XCTAssertFalse(WeeklyLimitResetDetector.confettiEnabled(defaults))
+
+        defaults.set(false, forKey: WeeklyLimitResetDetector.toastEnabledKey)
+        defaults.set(true, forKey: WeeklyLimitResetDetector.confettiEnabledKey)
+        XCTAssertFalse(WeeklyLimitResetDetector.toastEnabled(defaults))
+        XCTAssertTrue(WeeklyLimitResetDetector.confettiEnabled(defaults))
+    }
 }

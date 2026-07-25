@@ -55,8 +55,8 @@ landing.nav.signup,landing,LandingPage,LandingPage,nav_signup,"SIGN UP",,active
 landing.install.command,landing,LandingPage,LandingPage,install_command,"npx --yes tokentracker-cli",,active
 landing.install.action.copy,landing,LandingPage,LandingPage,install_copy,"COPY COMMAND",,active
 landing.install.action.copied,landing,LandingPage,LandingPage,install_copied,"COPIED",,active
-landing.meta.title,landing,LandingPage,Meta,title,"Token Tracker — Token Usage Tracker for AI Agent CLIs",,active
-landing.meta.description,landing,LandingPage,Meta,description,"Automatically monitor token usage across Claude Code, Cursor, Codex, and more. Local-first, privacy-focused, and zero manual configuration.",,active
+landing.meta.title,landing,LandingPage,Meta,title,"Token Tracker — AI Token Usage & Cost Tracker for Coding CLIs",,active
+landing.meta.description,landing,LandingPage,Meta,description,"Free, open-source, local-first tracker that monitors AI token usage and cost across Claude Code, Codex, Cursor, Gemini and 27 CLIs. One-command install, privacy-first.",,active
 landing.meta.og_site_name,landing,LandingPage,Meta,og_site_name,"Token Tracker",,active
 landing.meta.og_type,landing,LandingPage,Meta,og_type,"website",,active
 landing.meta.og_image,landing,LandingPage,Meta,og_image,"https://www.tokentracker.cc/dashboard-dark.png",,active
@@ -209,6 +209,7 @@ dashboard.cost_breakdown.close,ui,CostAnalysisModal,CostAnalysisModal,close_labe
 
 
 trend.monitor.label,ui,TrendMonitor,TrendMonitor,label,"Usage Trend",,active
+trend.monitor.predicted,ui,TrendMonitor,TrendMonitor,predicted_label,"Estimated",,active
 trend.zoom.open_aria,ui,TrendMonitor,TrendMonitor,zoom_open_aria,"Expand to full screen",,active
 trend.zoom.close_aria,ui,TrendMonitorZoomModal,TrendMonitorZoomModal,zoom_close_aria,"Close",,active
 trend.zoom.badge,ui,TrendMonitorZoomModal,TrendMonitorZoomModal,zoom_badge,"Trend Insight",,active
@@ -377,7 +378,7 @@ nav.aside_label,shared,*,Sidebar,aside_label,"Main navigation",,active
 nav.nav_label,shared,*,Sidebar,nav_label,"Primary",,active
 limits.page.subtitle,ui,LimitsPage,LimitsPage,subtitle,"Rate limits and quota usage across your AI tools.",,active
 limits.settings.toggle_visible,ui,LimitsPage,LimitsSettingsPanel,toggle_visible,"Toggle visibility",,active
-limits.settings.display_mode_label,ui,LimitsPage,LimitsSettingsPanel,display_mode_label,"Usage",,active
+limits.settings.display_mode_label,ui,LimitsPage,LimitsSettingsPanel,display_mode_label,"Usage Display",,active
 limits.settings.display_mode_used,ui,LimitsPage,LimitsSettingsPanel,display_mode_used,"Used",,active
 limits.settings.display_mode_remaining,ui,LimitsPage,LimitsSettingsPanel,display_mode_remaining,"Remaining",,active
 limits.page.openSettings,ui,LimitsPage,LimitsPage,open_settings,"Display settings",,active
@@ -459,6 +460,7 @@ settings.page.subtitle,ui,SettingsPage,SettingsPage,subtitle,"Manage your accoun
 settings.section.appearance,ui,SettingsPage,SettingsPage,sec_appearance,"Appearance",,active
 settings.section.account,ui,SettingsPage,SettingsPage,sec_account,"Account",,active
 settings.section.limits,ui,SettingsPage,SettingsPage,sec_limits,"Limits Display",,active
+settings.limits.providers,ui,SettingsPage,SettingsPage,limits_providers,"Providers",,active
 settings.labs.qpd.label,ui,SettingsPage,LabsSection,qpd_label,"Analyze PR cost-efficiency",,active
 settings.labs.qpd.hint,ui,SettingsPage,LabsSection,qpd_hint,"Analyze average delivery costs and effective Tokens per model from merged PRs and AI-attributed commits.",,active
 settings.labs.qpd.aria,ui,SettingsPage,LabsSection,qpd_aria,"Toggle PR cost-efficiency analysis",,active
@@ -559,6 +561,8 @@ settings.menubar.iconStyle.clawd,ui,WidgetsPage,MenuBarDisplayCard,mb_icon_style
 settings.menubar.iconStyle.cat,ui,WidgetsPage,MenuBarDisplayCard,mb_icon_style_cat,"Cat",,active
 settings.menubar.iconStyle.pet,ui,WidgetsPage,MenuBarDisplayCard,mb_icon_style_pet,"My pet",,active
 settings.menubar.iconStyle.static,ui,WidgetsPage,MenuBarDisplayCard,mb_icon_style_static,"Static",,active
+settings.menubar.toastOnReset,ui,SettingsPage,SettingsPage,mb_reset_toast,"Toast on limits reset",,active
+settings.menubar.toastOnResetHint,ui,SettingsPage,SettingsPage,mb_reset_toast_hint,"Show a brief message when a usage limit resets.",,active
 settings.menubar.confettiOnReset,ui,SettingsPage,SettingsPage,mb_confetti,"Confetti on limits reset",,active
 settings.menubar.confettiOnResetHint,ui,SettingsPage,SettingsPage,mb_confetti_hint,"Set off a fireworks celebration when a usage limit resets after you were near it.",,active
 settings.menubar.appearance,ui,SettingsPage,MenuBarSection,mb_appearance,"Menu bar display & icon",,active
@@ -666,6 +670,10 @@ usage.overview.expand,ui,DashboardPage,UsageOverview,expand,"expand",,active
 usage.overview.collapse,ui,DashboardPage,UsageOverview,collapse,"collapse",,active
 usage.overview.model_count,ui,DashboardPage,UsageOverview,model_count,"{{count}} models",,active
 usage.overview.model_details_aria,ui,DashboardPage,UsageOverview,model_details_aria,"{{provider}} model details",,active
+usage.overview.all_tools,ui,DashboardPage,UsageOverview,all_tools,"All",,active
+usage.overview.all_models,ui,DashboardPage,UsageOverview,all_models,"All models",,active
+usage.overview.all_models_note,ui,DashboardPage,UsageOverview,all_models_note,"Models with the same name are combined across tools and ranked by total usage.",,active
+usage.overview.all_tools_card_aria,ui,DashboardPage,UsageOverview,all_tools_card_aria,"All tools: {{tokens}} tokens, {{cost}}, {{count}} models. Show combined model ranking",,active
 usage.overview.cache_hit_rate_label,ui,DashboardPage,UsageOverview,cache_hit_rate_label,"Cache hit rate",,active
 usage.overview.cache_hit_rate_detail,ui,DashboardPage,UsageOverview,cache_hit_rate_detail,"{{reused}} reused / {{input}} input",,active
 usage.overview.antigravity_notice_title,ui,DashboardPage,UsageOverview,antigravity_notice_title,"Estimated tokens",,active
@@ -747,6 +755,7 @@ shared.time.h_ago,shared,*,Shared,time_h_ago,"{{n}}h",,active
 shared.time.d_ago,shared,*,Shared,time_d_ago,"{{n}}d",,active
 nav.ip_check,shared,*,Sidebar,nav_ip_check,Claude IP Check,,active
 nav.skills,shared,*,Sidebar,nav_skills,Skills,,active
+nav.sessions,shared,*,Sidebar,nav_sessions,Sessions,,active
 skills.page.title,ui,SkillsPage,SkillsPage,title,Skills,,active
 skills.tab.my,ui,SkillsPage,SkillsPage,tab_my,My Skills,,active
 skills.tab.browse,ui,SkillsPage,SkillsPage,tab_browse,Browse,,active
@@ -1133,6 +1142,7 @@ skills.usage.disclaimer,ui,SkillsPage,SkillDetailPanel,usage_disclaimer,"Counts 
 dashboard.device_filter.all,dashboard,DashboardPage,UsageOverview,option_all,"All devices",,active
 dashboard.device_filter.aria,dashboard,DashboardPage,UsageOverview,select_aria,"Filter by device",,active
 dashboard.device_card.title,dashboard,DashboardPage,DeviceUsageCard,title,"By device",,active
+dashboard.device_card.current,dashboard,DashboardPage,DeviceUsageCard,current,"This device",,active
 dashboard.device_card.unnamed,dashboard,DashboardPage,DeviceUsageCard,unnamed,"Unnamed device",,active
 dashboard.device_card.rename_aria,dashboard,DashboardPage,DeviceUsageCard,rename_aria,"Rename device",,active
 dashboard.device_card.rename_placeholder,dashboard,DashboardPage,DeviceUsageCard,rename_placeholder,"Device name",,active
@@ -1287,6 +1297,42 @@ sessions.card.context_tooltip,dashboard,DashboardPage,SessionInsightsCard,contex
 sessions.card.privacy,dashboard,DashboardPage,SessionInsightsCard,privacy,"Local metadata only. Prompt, response, command output, and diff contents are never retained.",,active
 sessions.card.subagents,dashboard,DashboardPage,SessionInsightsCard,subagents,"Subagent dispatches",,active
 sessions.card.subagent_item,dashboard,DashboardPage,SessionInsightsCard,subagent_item,"{{name}} · {{calls}}",,active
+sessions.page.subtitle,ui,SessionsPage,SessionsPage,subtitle,"Browse your local Claude Code and Codex sessions and copy a resume command in one click.",,active
+sessions.page.refresh,ui,SessionsPage,SessionsPage,refresh,"Refresh sessions",,active
+sessions.filter.source_all,ui,SessionsPage,SessionsPage,filter_source_all,"All",,active
+sessions.filter.source_aria,ui,SessionsPage,SessionsPage,filter_source_aria,"Filter by session source",,active
+sessions.filter.range_all,ui,SessionsPage,SessionsPage,filter_range_all,"All",,active
+sessions.filter.range_aria,ui,SessionsPage,SessionsPage,filter_range_aria,"Filter by date range",,active
+sessions.filter.range_7d,ui,SessionsPage,SessionsPage,filter_range_7d,"7d",,active
+sessions.filter.range_30d,ui,SessionsPage,SessionsPage,filter_range_30d,"30d",,active
+sessions.filter.range_90d,ui,SessionsPage,SessionsPage,filter_range_90d,"90d",,active
+sessions.filter.project_all,ui,SessionsPage,SessionsPage,filter_project_all,"All projects",,active
+sessions.filter.project_search,ui,SessionsPage,SessionsPage,filter_project_search,"Search projects…",,active
+sessions.filter.project_empty,ui,SessionsPage,SessionsPage,filter_project_empty,"No matching projects",,active
+sessions.filter.project_aria,ui,SessionsPage,SessionsPage,filter_project_aria,"Filter by project",,active
+sessions.filter.result_count,ui,SessionsPage,SessionsPage,filter_result_count,"{{filtered}} of {{total}}",,active
+sessions.action.search_aria,ui,SessionsPage,SessionsPage,search_aria,"Search sessions",,active
+sessions.action.search_clear,ui,SessionsPage,SessionsPage,search_clear,"Clear search",,active
+sessions.search.placeholder,ui,SessionsPage,SessionsPage,search_placeholder,"Search title, project, model, or ID…",,active
+sessions.loading,ui,SessionsPage,SessionsPage,loading,"Loading sessions…",,active
+sessions.col.tokens,ui,SessionsPage,SessionsPage,col_tokens,"Tokens",,active
+sessions.col.cost,ui,SessionsPage,SessionsPage,col_cost,"Cost",,active
+sessions.col.edits,ui,SessionsPage,SessionsPage,col_edits,"Edits",,active
+sessions.badge.first_pass,ui,SessionsPage,SessionsPage,badge_first_pass,"First-pass",,active
+sessions.duration.minutes,ui,SessionsPage,SessionsPage,duration_minutes,"{{minutes}}m",,active
+sessions.duration.hours,ui,SessionsPage,SessionsPage,duration_hours,"{{hours}}h {{minutes}}m",,active
+sessions.project.unknown,ui,SessionsPage,SessionsPage,project_unknown,"Untitled session",,active
+sessions.model.unknown,ui,SessionsPage,SessionsPage,model_unknown,"Unknown model",,active
+sessions.resume.copy,ui,SessionsPage,SessionsPage,resume_copy,"Copy command",,active
+sessions.resume.copy_aria,ui,SessionsPage,SessionsPage,resume_copy_aria,"Copy resume command: {{command}}",,active
+sessions.resume.copied,ui,SessionsPage,SessionsPage,resume_copied,"Resume command copied",,active
+sessions.resume.copy_failed,ui,SessionsPage,SessionsPage,resume_copy_failed,"Could not copy command",,active
+sessions.resume.unavailable,ui,SessionsPage,SessionsPage,resume_unavailable,"Resume command unavailable",,active
+sessions.empty.title,ui,SessionsPage,SessionsPage,empty_title,"No sessions yet",,active
+sessions.empty.body,ui,SessionsPage,SessionsPage,empty_body,"Run Claude Code or Codex on this machine and your sessions will show up here.",,active
+sessions.empty.filtered_title,ui,SessionsPage,SessionsPage,empty_filtered_title,"No matching sessions",,active
+sessions.empty.filtered_body,ui,SessionsPage,SessionsPage,empty_filtered_body,"Try a different search or clear the filters.",,active
+sessions.privacy,ui,SessionsPage,SessionsPage,privacy,"Processed locally. Prompt and response bodies, command output, and diff contents are never retained or uploaded.",,active
 limits.alert.enable,limits,LimitsPage,LimitsPage,enable_alerts,"Enable predictive limit alerts",,active
 limits.alert.disable,limits,LimitsPage,LimitsPage,disable_alerts,"Disable predictive limit alerts",,active
 limits.alert.title,limits,LimitsPage,LimitsPage,alert_title,"{{provider}} limit may run out early",,active
@@ -1297,3 +1343,67 @@ limits.provenance.stale,limits,LimitsPage,UsageLimitsPanel,provenance_stale,"Sta
 limits.provenance.tooltip,limits,LimitsPage,UsageLimitsPanel,provenance_tooltip,"Source: {{source}}; confidence: {{confidence}}",,active
 limits.reauth.badge,limits,LimitsPage,UsageLimitsPanel,reauth_badge,"Re-auth",,active
 limits.reauth.tooltip,limits,LimitsPage,UsageLimitsPanel,reauth_tooltip,"Sign-in expired — run `{{command}}` in a terminal once to sign in again, then refresh.",,active
+shared.github.star,shared,*,GithubStar,star,"Star",,active
+device.approval.title,ui,DevicePage,DevicePage,title,"Approve your CLI",,active
+device.approval.description,ui,DevicePage,DevicePage,description,"Enter the code shown by your CLI. It will link this machine to your account so its token usage appears in your leaderboard profile.",,active
+device.approval.sign_in_banner,ui,DevicePage,DevicePage,sign_in_banner,"Sign in first, then return to this page.",,active
+device.approval.code_label,ui,DevicePage,DevicePage,code_label,"CLI code",,active
+device.approval.action.approve,ui,DevicePage,DevicePage,approve,"Approve",,active
+device.approval.action.approving,ui,DevicePage,DevicePage,approving,"Approving…",,active
+device.approval.error.sign_in,ui,DevicePage,DevicePage,error_sign_in,"Please sign in first.",,active
+device.approval.error.invalid_code,ui,DevicePage,DevicePage,error_invalid_code,"Invalid code format. Expected XXXX-XXXX.",,active
+device.approval.error.no_token,ui,DevicePage,DevicePage,error_no_token,"No access token — please sign in again.",,active
+device.approval.success.already,ui,DevicePage,DevicePage,success_already,"This device was already approved.",,active
+device.approval.success.already_client,ui,DevicePage,DevicePage,success_already_client,"{{client}} was already approved.",,active
+device.approval.success.approved,ui,DevicePage,DevicePage,success_approved,"Approved. You can close this tab — your CLI will connect within a few seconds.",,active
+device.approval.success.approved_client,ui,DevicePage,DevicePage,success_approved_client,"Approved for {{client}}. You can close this tab — your CLI will connect within a few seconds.",,active
+device.approval.error.not_found,ui,DevicePage,DevicePage,error_not_found,"Code not found. Double-check the code shown by your CLI.",,active
+device.approval.error.expired,ui,DevicePage,DevicePage,error_expired,"Code expired. Run `tracker device-login` again and retry.",,active
+device.approval.error.session_expired,ui,DevicePage,DevicePage,error_session_expired,"Session expired. Sign out, sign in, and try again.",,active
+device.approval.error.server,ui,DevicePage,DevicePage,error_server,"Server error (HTTP {{status}}).",,active
+device.approval.error.server_detail,ui,DevicePage,DevicePage,error_server_detail,"Server error: {{message}}",,active
+device.approval.error.network,ui,DevicePage,DevicePage,error_network,"Network error: {{message}}",,active
+dashboard.cost_breakdown.empty,ui,CostAnalysisModal,CostAnalysisModal,empty,"No spend recorded.",,active
+dashboard.cost_breakdown.model_column,ui,CostAnalysisModal,CostAnalysisModal,model_column,"Model",,active
+dashboard.cost_breakdown.cost_column,ui,CostAnalysisModal,CostAnalysisModal,cost_column,"Cost",,active
+heatmap.3d.modal.eyebrow,ui,ActivityHeatmap,ActivityHeatmap,eyebrow,"3D Insight",,active
+heatmap.tooltip.level,ui,ActivityHeatmap,ActivityHeatmap,tooltip_level,"Level {{level}}",,active
+heatmap.tooltip.tokens,ui,ActivityHeatmap3D,ActivityHeatmap3D,tooltip_tokens,"{{day}}: {{value}} tokens",,active
+heatmap.tooltip.model_breakdown,ui,ActivityHeatmap,ActivityHeatmap,model_breakdown,"Model Breakdown",,active
+heatmap.tooltip.token_breakdown,ui,TrendMonitor,TrendMonitor,token_breakdown,"Token Breakdown",,active
+trend.monitor.empty,ui,DashboardPage,TrendMonitor,empty,"No data yet",,active
+trend.monitor.unsynced,ui,DashboardPage,TrendMonitor,unsynced,"Unsynced",,active
+wrapped.loading,ui,WrappedPage,WrappedPage,loading,"Loading…",,active
+wrapped.error,ui,WrappedPage,WrappedPage,error,"Couldn't load Wrapped: {{error}}",,active
+wrapped.empty,ui,WrappedPage,WrappedPage,empty,"No data for that year yet. Run `{{command}}` first.",,active
+wrapped.kicker,ui,WrappedPage,WrappedPage,kicker,"TokenTracker Wrapped",,active
+wrapped.total_tokens,ui,WrappedPage,WrappedPage,total_tokens,"Total tokens",,active
+wrapped.summary,ui,WrappedPage,WrappedPage,summary,"Across {{conversations}} conversations, {{days}} active days, and {{tools}} tools",,active
+wrapped.top_tools,ui,WrappedPage,WrappedPage,top_tools,"Top tools",,active
+wrapped.top_models,ui,WrappedPage,WrappedPage,top_models,"Top models",,active
+wrapped.peak_hour,ui,WrappedPage,WrappedPage,peak_hour,"Peak hour",,active
+wrapped.tokens,ui,WrappedPage,WrappedPage,tokens,"{{count}} tokens",,active
+wrapped.longest_streak,ui,WrappedPage,WrappedPage,longest_streak,"Longest streak",,active
+wrapped.days,ui,WrappedPage,WrappedPage,days,"{{count}} days",,active
+wrapped.top_days,ui,WrappedPage,WrappedPage,top_days,"Top days",,active
+wrapped.highlights,ui,WrappedPage,WrappedPage,highlights,"Highlights",,active
+wrapped.footer,ui,WrappedPage,WrappedPage,footer,"Generated from local queue.jsonl · share with `{{command}}`",,active
+wrapped.highlight.model,ui,WrappedPage,WrappedPage,highlight_model,"{{model}} powered {{percent}}% of your year.",,active
+wrapped.highlight.day,ui,WrappedPage,WrappedPage,highlight_day,"Your busiest day was {{day}} ({{tokens}} tokens).",,active
+wrapped.highlight.hour,ui,WrappedPage,WrappedPage,highlight_hour,"You hit peak flow around {{hour}}:00 UTC.",,active
+wrapped.highlight.streak,ui,WrappedPage,WrappedPage,highlight_streak,"Longest streak: {{days}} consecutive days of coding with AI.",,active
+wrapped.highlight.tools,ui,WrappedPage,WrappedPage,highlight_tools,"You used {{count}} different AI tools — that's range.",,active
+widgets.preview.today,ui,WidgetsPage,WidgetsPage,preview_today,"Today",,active
+widgets.preview.seven_days,ui,WidgetsPage,WidgetsPage,preview_seven_days,"7 days",,active
+widgets.preview.heatmap_summary,ui,WidgetsPage,WidgetsPage,preview_heatmap_summary,"tokens · {{days}} active days",,active
+widgets.preview.reset_days,ui,WidgetsPage,WidgetsPage,preview_reset_days,"in {{days}}d",,active
+widgets.preview.reset_hours_minutes,ui,WidgetsPage,WidgetsPage,preview_reset_hours_minutes,"in {{hours}}h {{minutes}}m",,active
+widgets.preview.metric,ui,WidgetsPage,WidgetsPage,preview_metric,"Metric",,active
+landing.v3.how.scene.terminal_title,landing,LandingPage,HowItWorksSection,scene_terminal_title,"Terminal",,active
+landing.v3.how.scene.prompt,landing,LandingPage,HowItWorksSection,scene_prompt,"""refactor the parser""",,active
+landing.v3.how.scene.thinking,landing,LandingPage,HowItWorksSection,scene_thinking,"thinking…",,active
+landing.v3.how.scene.editing,landing,LandingPage,HowItWorksSection,scene_editing,"editing {{path}}",,active
+landing.v3.how.scene.files_changed,landing,LandingPage,HowItWorksSection,scene_files_changed,"{{count}} files changed",,active
+landing.v3.how.scene.session_title,landing,LandingPage,HowItWorksSection,scene_session_title,"session log · last turn",,active
+landing.v3.how.scene.appended,landing,LandingPage,HowItWorksSection,scene_appended,"appended locally",,active
+landing.v3.how.scene.total_tokens,landing,LandingPage,HowItWorksSection,scene_total_tokens,"total tokens",,active

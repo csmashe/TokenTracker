@@ -158,6 +158,25 @@ test("background auto sync skips deep Codex archives", async () => {
   });
 });
 
+test("background drain skips deep Codex archives while retaining drain semantics", async () => {
+  await withTempSyncEnv(async (home) => {
+    const codexHome = process.env.CODEX_HOME;
+    await writeCodexRollout(codexHome, "2026-06-30", "019f16bd-1002-7000-8000-aaaaaaaaaaaa", 53);
+    await writeArchivedCodexRollout(codexHome, "2026-06-30", "019f16bd-1003-7000-8000-aaaaaaaaaaaa", 59);
+
+    const archiveRoot = path.join(codexHome, "archived_sessions");
+    const archiveReads = await countReaddir(
+      () => cmdSync(["--auto", "--background", "--drain"]),
+      (target) => target === archiveRoot || target.startsWith(`${archiveRoot}${path.sep}`),
+    );
+
+    assert.equal(archiveReads, 0);
+    const queue = await readQueue(home);
+    assert.match(queue, /"total_tokens":53/);
+    assert.doesNotMatch(queue, /"total_tokens":59/);
+  });
+});
+
 test("Codex notify sync catches up after an overlapping background sync releases the lock", async () => {
   await withTempSyncEnv(async (home) => {
     const codexHome = process.env.CODEX_HOME;
@@ -186,6 +205,66 @@ test("Codex notify sync catches up after an overlapping background sync releases
     const queue = await readQueue(home);
     assert.match(queue, /"source":"codex"/);
     assert.match(queue, /"total_tokens":73/);
+  });
+});
+
+test("native account publication waits for an overlapping sync instead of reporting success", async () => {
+  await withTempSyncEnv(async (home) => {
+    const codexHome = process.env.CODEX_HOME;
+    await writeCodexRollout(
+      codexHome,
+      "2026-06-30",
+      "019f16bd-1010-7000-8000-aaaaaaaaaaaa",
+      79,
+    );
+
+    const trackerDir = path.join(home, ".tokentracker", "tracker");
+    await fs.mkdir(trackerDir, { recursive: true });
+    const active = await openLock(path.join(trackerDir, "sync.lock"), {
+      quietIfLocked: true,
+    });
+    assert.ok(active);
+
+    const publicationSync = cmdSync(
+      ["--auto", "--background", "--publish-account"],
+      { lockWaitOptions: { priorityWaitMs: 500, priorityPollMs: 10 } },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    await active.release();
+    await publicationSync;
+
+    const queue = await readQueue(home);
+    assert.match(queue, /"source":"codex"/);
+    assert.match(queue, /"total_tokens":79/);
+  });
+});
+
+test("manual drain fails explicitly when the sync lock stays busy", async () => {
+  await withTempSyncEnv(async (home) => {
+    const trackerDir = path.join(home, ".tokentracker", "tracker");
+    await fs.mkdir(trackerDir, { recursive: true });
+    const active = await openLock(path.join(trackerDir, "sync.lock"), {
+      quietIfLocked: true,
+    });
+    assert.ok(active);
+
+    try {
+      await assert.rejects(
+        cmdSync(
+          ["--drain"],
+          { lockWaitOptions: { priorityWaitMs: 40, priorityPollMs: 5 } },
+        ),
+        (error) => {
+          assert.equal(error.code, "SYNC_BUSY");
+          assert.match(error.message, /no refresh was performed/);
+          return true;
+        },
+      );
+    } finally {
+      await active.release();
+    }
+
+    await assert.rejects(readQueue(home), { code: "ENOENT" });
   });
 });
 

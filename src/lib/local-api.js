@@ -15,6 +15,19 @@ const { getOrCreateMachineId, computeStableMachineId } = require("./machine-id")
 
 const SYNC_TIMEOUT_MS = 120_000;
 const TRACKER_BIN = path.resolve(__dirname, "../../bin/tracker.js");
+const MAX_DEVICE_NAME_LENGTH = 128;
+
+function getSystemDeviceName() {
+  try {
+    const hostname = os.hostname()
+      .replace(/[\u0000-\u001f\u007f]/g, "")
+      .trim()
+      .slice(0, MAX_DEVICE_NAME_LENGTH);
+    return hostname || null;
+  } catch {
+    return null;
+  }
+}
 
 // Avatar proxy (see /api/avatar-proxy below). In-memory LRU; survives the
 // CLI server lifetime, which is good enough — the dashboard reloads cheaply.
@@ -118,7 +131,32 @@ function readProjectUsageContext(qp, url) {
   return { from, to, timeZoneContext, hasRange, dayInRange, projectRows };
 }
 
+// Same signature-based caching as readQueueData: the project-usage endpoints
+// all fan out from one dashboard refresh, so without this every request
+// re-read and re-parsed the whole append-only project queue.
+let projectQueueDataCache = null;
+
 function readProjectQueueData(projectQueuePath) {
+  let signature;
+  try {
+    signature = queueFileSignature(projectQueuePath);
+  } catch (e) {
+    if (projectQueueDataCache?.queuePath === projectQueuePath) {
+      projectQueueDataCache = null;
+    }
+    if (e?.code !== "ENOENT") {
+      console.error("[LocalAPI] readProjectQueueData: failed to stat:", e?.message || e);
+    }
+    return [];
+  }
+
+  if (
+    projectQueueDataCache?.queuePath === projectQueuePath &&
+    projectQueueDataCache.signature === signature
+  ) {
+    return projectQueueDataCache.rows;
+  }
+
   let raw;
   try {
     raw = fs.readFileSync(projectQueuePath, "utf8");
@@ -141,7 +179,11 @@ function readProjectQueueData(projectQueuePath) {
       // skip malformed
     }
   }
-  return Array.from(seen.values());
+  // Callers treat the result as read-only (sortByHour copies before sorting),
+  // so the cached array can be shared across requests.
+  const rows = Array.from(seen.values());
+  projectQueueDataCache = { queuePath: projectQueuePath, signature, rows };
+  return rows;
 }
 
 function isLegacyInclusiveCodexRow(row) {
@@ -188,9 +230,9 @@ function normalizeQueueRow(row) {
 }
 
 function readQueueData(queuePath) {
-  let signature;
+  let stat;
   try {
-    signature = queueFileSignature(queuePath);
+    stat = fs.statSync(queuePath, { bigint: true });
   } catch (e) {
     if (queueDataCache?.queuePath === queuePath) queueDataCache = null;
     if (e?.code !== "ENOENT") {
@@ -198,49 +240,119 @@ function readQueueData(queuePath) {
     }
     return [];
   }
+  const signature = `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
 
-  if (queueDataCache?.queuePath === queuePath && queueDataCache.signature === signature) {
-    return queueDataCache.rows;
+  const cached = queueDataCache;
+  if (cached?.queuePath === queuePath && cached.signature === signature) {
+    return cached.rows;
   }
 
-  let raw;
-  try {
-    raw = fs.readFileSync(queuePath, "utf8");
-  } catch (e) {
-    // ENOENT is legitimate (never synced yet); anything else is a signal we
-    // don't want to hide behind an empty array forever — the dashboard would
-    // otherwise render "0 tokens" with no clue the queue was unreadable.
-    if (e?.code !== "ENOENT") {
-      console.error("[LocalAPI] readQueueData: failed to read queue:", e?.message || e);
-    }
-    return [];
-  }
-  const lines = raw.split("\n").filter((l) => l.trim());
-  // Parse row-by-row so a single corrupted line (partial write, disk-full
-  // truncation, …) does not wipe out every other row with it.
-  const parsed = [];
-  let malformed = 0;
-  for (const line of lines) {
+  // The queue is append-only, so on a same-file append only the new tail is
+  // read and parsed; the deduped row set carries over. A replaced, truncated,
+  // or first-seen file falls back to a full read.
+  const devIno = `${stat.dev}:${stat.ino}`;
+  const fileSize = Number(stat.size);
+  const canAppend =
+    cached != null &&
+    cached.queuePath === queuePath &&
+    cached.devIno === devIno &&
+    fileSize >= cached.consumedBytes;
+  let seen = canAppend ? cached.seen : new Map();
+  let offset = canAppend ? cached.consumedBytes : 0;
+
+  // Integrity probe for the append assumption: repo writers only append or
+  // atomically replace (inode change), but an EXTERNAL in-place rewrite
+  // (cp over the file, shell redirect) keeps the inode with a same/larger
+  // size while changing the prefix. The byte before our offset must be the
+  // newline that terminated the last consumed line — anything else means the
+  // prefix is no longer ours, so fall back to a full read.
+  if (offset > 0) {
     try {
-      parsed.push(JSON.parse(line));
+      const fd = fs.openSync(queuePath, "r");
+      try {
+        const probe = Buffer.allocUnsafe(1);
+        if (fs.readSync(fd, probe, 0, 1, offset - 1) !== 1 || probe[0] !== 0x0a) {
+          seen = new Map();
+          offset = 0;
+        }
+      } finally {
+        fs.closeSync(fd);
+      }
     } catch {
-      malformed += 1;
+      seen = new Map();
+      offset = 0;
+    }
+  }
+
+  let raw = "";
+  if (fileSize > offset) {
+    try {
+      if (offset === 0) {
+        raw = fs.readFileSync(queuePath, "utf8");
+      } else {
+        const fd = fs.openSync(queuePath, "r");
+        try {
+          const length = fileSize - offset;
+          const buffer = Buffer.allocUnsafe(length);
+          let read = 0;
+          while (read < length) {
+            // A concurrent truncation between stat and open makes readSync hit
+            // EOF early — without the 0-byte break this loop never terminates.
+            const n = fs.readSync(fd, buffer, read, length - read, offset + read);
+            if (n === 0) break;
+            read += n;
+          }
+          raw = buffer.toString("utf8", 0, read);
+        } finally {
+          fs.closeSync(fd);
+        }
+      }
+    } catch (e) {
+      // ENOENT is legitimate (queue deleted between stat and read); anything
+      // else is a signal we don't want to hide behind an empty array forever —
+      // the dashboard would otherwise render "0 tokens" with no clue the queue
+      // was unreadable.
+      if (e?.code !== "ENOENT") {
+        console.error("[LocalAPI] readQueueData: failed to read queue:", e?.message || e);
+      }
+      return canAppend ? cached.rows : [];
+    }
+  }
+
+  // Parse row-by-row so a single corrupted line (partial write, disk-full
+  // truncation, …) does not wipe out every other row with it. An unterminated
+  // tail is attempted (legacy writers may omit the final newline) but NOT
+  // marked consumed — a mid-append partial line is re-read once it completes.
+  // "\n" (0x0A) never appears inside a multi-byte UTF-8 sequence, so cutting
+  // on the last newline is byte-safe.
+  let consumedBytes = offset;
+  let malformed = 0;
+  if (raw) {
+    const lastNewline = raw.lastIndexOf("\n");
+    if (lastNewline !== -1) {
+      consumedBytes += Buffer.byteLength(raw.slice(0, lastNewline), "utf8") + 1;
+    }
+    const lines = raw.split("\n");
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        const row = JSON.parse(line);
+        // Deduplicate: each sync appends cumulative totals per bucket, so for
+        // each (source, model, hour_start) keep only the latest (last) entry.
+        const key = `${row.source || ""}|${row.model || ""}|${row.hour_start || ""}`;
+        seen.set(key, normalizeQueueRow(row));
+      } catch {
+        malformed += 1;
+      }
     }
   }
   if (malformed > 0) {
     console.error(
-      `[LocalAPI] readQueueData: skipped ${malformed}/${lines.length} malformed line(s) in ${queuePath}`,
+      `[LocalAPI] readQueueData: skipped ${malformed} malformed line(s) in ${queuePath}`,
     );
   }
-  // Deduplicate: each sync appends cumulative totals per bucket, so for
-  // each (source, model, hour_start) keep only the latest (last) entry.
-  const seen = new Map();
-  for (const row of parsed) {
-    const key = `${row.source || ""}|${row.model || ""}|${row.hour_start || ""}`;
-    seen.set(key, normalizeQueueRow(row));
-  }
   const rows = Array.from(seen.values());
-  queueDataCache = { queuePath, signature, rows };
+  queueDataCache = { queuePath, signature, devIno, consumedBytes, seen, rows };
   return rows;
 }
 
@@ -802,9 +914,18 @@ function runSyncCommand(extraEnv = {}, opts = {}) {
     });
     child.on("close", (code) => {
       const r = { code: code ?? 1, stdout: trimOutput(stdout), stderr: trimOutput(stderr) };
-      code === 0
-        ? finish(resolve, r)
-        : finish(reject, Object.assign(new Error(r.stderr || r.stdout || `exit ${r.code}`), r));
+      if (code === 0) {
+        finish(resolve, r);
+        return;
+      }
+      const error = Object.assign(
+        new Error(r.stderr || r.stdout || `exit ${r.code}`),
+        r,
+      );
+      if (/\bSYNC_BUSY\b/.test(`${r.stderr}\n${r.stdout}`)) {
+        error.code = "SYNC_BUSY";
+      }
+      finish(reject, error);
     });
   });
 }
@@ -1248,7 +1369,7 @@ function createLocalApiHandler({ queuePath }) {
           // 必须和 dashboard/src/lib/cloud-sync.ts 使用同一个设备身份。
           // 旧云端设备按 (platform, device_name) 认领；如果这里发明
           // local-sync 身份，会多出一个 active device，账户视图会把历史求和两次。
-          device_name: `Token Tracker (dashboard) #${machineId.slice(0, 8)}`,
+          device_name: getSystemDeviceName() || `Token Tracker (dashboard) #${machineId.slice(0, 8)}`,
           platform: dashboardPlatform,
           machine_id: machineId,
         }),
@@ -1798,7 +1919,9 @@ function createLocalApiHandler({ queuePath }) {
         }
         const extraEnv = {};
         const drain = body.drain === true;
-        const auto = body.auto === true && !drain;
+        // Native Sync Now combines an incremental background scan with a full
+        // cloud drain. A plain {drain:true} request remains an exhaustive sync.
+        const auto = body.auto === true;
         const background =
           auto && (body.background === true || body.lightweight === true);
         // The local server is the trust boundary for cloud-sync preferences.
@@ -2020,6 +2143,33 @@ function createLocalApiHandler({ queuePath }) {
         json(res, { from, to, ...result });
       } catch (error) {
         json(res, { available: false, error: error?.message || "Session analytics failed" }, 500);
+      }
+      return true;
+    }
+
+    // --- metadata-only session browser (LOCAL ONLY) ---
+    // Unlike session-insights this returns per-session rows that retain the
+    // raw session_id + local project path so the dashboard can offer one-click
+    // resume. It is intentionally served only from the local API and never
+    // proxied to the cloud account view.
+    if (p === "/functions/tokentracker-sessions") {
+      const from = url.searchParams.get("from") || "";
+      const to = url.searchParams.get("to") || "";
+      const refresh = ["1", "true"].includes(url.searchParams.get("refresh"));
+      const limitParam = parseInt(url.searchParams.get("limit") || "0", 10);
+      const limit = Number.isFinite(limitParam) && limitParam > 0 ? Math.min(limitParam, 2000) : 0;
+      // This payload contains local paths and resumable session identifiers.
+      // The server is loopback-only; additionally prevent browser/proxy caches
+      // from retaining the response after the page is closed.
+      res.setHeader("Cache-Control", "no-store");
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      try {
+        const { buildSessionAnalytics, listSessionsForBrowser } = require("./session-analytics");
+        const sessions = await buildSessionAnalytics({ force: refresh });
+        const result = listSessionsForBrowser(sessions, { from, to, limit });
+        json(res, { from, to, ...result });
+      } catch (error) {
+        json(res, { available: false, error: error?.message || "Session browser failed" }, 500);
       }
       return true;
     }
@@ -2469,7 +2619,10 @@ function createLocalApiHandler({ queuePath }) {
     // device_name keys on the MACHINE, not the browser — see
     // getOrCreateMachineId above and dashboard/src/lib/cloud-sync.ts.
     if (p === "/functions/tokentracker-machine-id") {
-      json(res, { machineId: getOrCreateMachineId(qp) });
+      json(res, {
+        machineId: getOrCreateMachineId(qp),
+        deviceName: getSystemDeviceName(),
+      });
       return true;
     }
 
@@ -2783,10 +2936,10 @@ module.exports = {
   // queue, wrapped aggregator) reports the same numbers for the same data.
   normalizeQueueRow,
   // Machine-stable identity (config.json machineId) — shared with
-  // `tracker device-login` so the CLI device-flow anchors its cloud device
-  // to the machine, not the hostname.
+  // `tracker device-login`; the hostname is only a human-readable label.
   getOrCreateMachineId,
   computeStableMachineId,
+  getSystemDeviceName,
   // Local achievement compute — exported for test/local-achievements.test.js.
   computeLocalAchievements,
   LOCAL_BADGE_THRESHOLDS,

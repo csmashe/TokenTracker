@@ -65,6 +65,13 @@ function loadLocalApiWithSpawn(fakeSpawn) {
   };
 }
 
+test("local device metadata exposes the system name separately from machine identity", () => {
+  const { getSystemDeviceName } = require("../src/lib/local-api");
+  const expected = os.hostname().replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 128) || null;
+  assert.equal(getSystemDeviceName(), expected);
+  assert.doesNotMatch(getSystemDeviceName() || "", /^Token Tracker .*#/u);
+});
+
 function createSuccessfulSpawn(calls) {
   return (cmd, args, options) => {
     calls.push({ cmd, args, options });
@@ -75,6 +82,24 @@ function createSuccessfulSpawn(calls) {
     process.nextTick(() => {
       child.stdout.emit("data", "sync ok");
       child.emit("close", 0);
+    });
+    return child;
+  };
+}
+
+function createBusySpawn(calls) {
+  return (cmd, args, options) => {
+    calls.push({ cmd, args, options });
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.kill = () => {};
+    process.nextTick(() => {
+      child.stderr.emit(
+        "data",
+        "Error: SYNC_BUSY: another sync is still running; no refresh was performed\n",
+      );
+      child.emit("close", 1);
     });
     return child;
   };
@@ -162,6 +187,42 @@ test("local sync rejects arbitrary insforgeBaseUrl overrides", async () => {
     restore();
     if (prevBaseUrl === undefined) delete process.env.TOKENTRACKER_INSFORGE_BASE_URL;
     else process.env.TOKENTRACKER_INSFORGE_BASE_URL = prevBaseUrl;
+  }
+});
+
+test("local sync preserves the SYNC_BUSY failure code", async () => {
+  const calls = [];
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "tt-local-sync-busy-"));
+  const { mod, restore } = loadLocalApiWithSpawn(createBusySpawn(calls));
+
+  try {
+    const handler = mod.createLocalApiHandler({
+      queuePath: path.join(tempDir, "queue.jsonl"),
+    });
+    const localAuthToken = await getLocalAuthToken(handler);
+    const req = createRequest({
+      method: "POST",
+      headers: { "x-tokentracker-local-auth": localAuthToken },
+      body: JSON.stringify({ drain: true, deviceToken: "device-token" }),
+    });
+    const res = createResponse();
+
+    const handled = await handler(
+      req,
+      res,
+      new URL("http://127.0.0.1/functions/tokentracker-local-sync"),
+    );
+
+    assert.equal(handled, true);
+    assert.equal(res.statusCode, 500);
+    const body = JSON.parse(res.body.toString("utf8"));
+    assert.equal(body.ok, false);
+    assert.equal(body.code, "SYNC_BUSY");
+    assert.match(body.error, /no refresh was performed/);
+    assert.equal(calls.length, 1);
+  } finally {
+    restore();
+    fs.rmSync(tempDir, { recursive: true, force: true });
   }
 });
 
@@ -353,7 +414,7 @@ test("local sync lightweight alias forwards background mode", async () => {
   }
 });
 
-test("local sync drain priority suppresses auto background mode", async () => {
+test("local sync combines background scan with drain priority", async () => {
   const calls = [];
   const { mod, restore } = loadLocalApiWithSpawn(createSuccessfulSpawn(calls));
 
@@ -382,9 +443,11 @@ test("local sync drain priority suppresses auto background mode", async () => {
     assert.equal(handled, true);
     assert.equal(res.statusCode, 200);
     assert.equal(calls.length, 1);
-    assert.deepEqual(calls[0].args.slice(-3), [
+    assert.deepEqual(calls[0].args.slice(-5), [
       path.join(process.cwd(), "bin/tracker.js"),
       "sync",
+      "--auto",
+      "--background",
       "--drain",
     ]);
   } finally {
@@ -1129,7 +1192,7 @@ test("local sync drain request mints a device token from relayed login when none
       assert.equal(opts.headers.Authorization, "Bearer access-token");
       const body = JSON.parse(String(opts.body || "{}"));
       assert.equal(body.machine_id, "machine-abcdef12");
-      assert.equal(body.device_name, "Token Tracker (dashboard) #machine-");
+      assert.equal(body.device_name, os.hostname().replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 128));
       assert.equal(
         body.platform,
         process.platform === "darwin" ? "MacIntel" :

@@ -55,7 +55,14 @@ test("canonical pricing block retains regression-prone entries and matcher order
   const block = extractBlock(CANONICAL);
 
   // Entries whose absence has already shipped real mispricing.
-  for (const key of ['"kimi-k2.6"', '"mimo-v2.5-pro"', '"mimo-v2.5"', '"mimo-v2-flash"']) {
+  for (const key of [
+    '"kimi-k2.6"',
+    '"mimo-v2.5-pro"',
+    '"mimo-v2.5"',
+    '"mimo-v2-flash"',
+    '"cursor-grok-4.5"',
+    '"cursor-grok-4.5-fast"',
+  ]) {
     assert.ok(block.includes(`${key}:`), `canonical table lost ${key}`);
   }
 
@@ -82,6 +89,11 @@ test("canonical pricing block retains regression-prone entries and matcher order
   );
   order('lower.includes("kimi-k2.6")', 'lower.includes("kimi")');
   order('lower.includes("mimo-v2.5-pro")', 'lower.includes("mimo-v2.5")');
+  order(
+    'lower.includes("grok-4.5") && lower.includes("fast")',
+    'lower.includes("grok-4.5"))',
+  );
+  order('lower.includes("grok-4.5"))', 'lower.includes("grok-4"))');
 });
 
 test("all cloud cost paths keep Pi Copilot subscription rows at zero cost", () => {

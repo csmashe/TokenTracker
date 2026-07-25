@@ -217,6 +217,8 @@ const MODEL_PRICING: Record<string, { input: number; output: number; cache_read:
   //    Grok parser emits cache_creation_input_tokens = 0, so cache_write is
   //    omitted — same as the canonical table). ──
   "grok-build": { input: 1.25, output: 2.50, cache_read: 0.20 },
+  "cursor-grok-4.5": { input: 2, output: 6, cache_read: 0.5, cache_write: 0 },
+  "cursor-grok-4.5-fast": { input: 4, output: 18, cache_read: 1, cache_write: 0 },
   "grok-4-0709": { input: 3.00, output: 15.00, cache_read: 0.75 },
   "grok-4": { input: 3.00, output: 15.00, cache_read: 0.75 },
   "grok-4-latest": { input: 3.00, output: 15.00, cache_read: 0.75 },
@@ -310,6 +312,8 @@ function getModelPricing(model: string) {
   if (lower.includes("deepseek-v4-pro")) return MODEL_PRICING["deepseek-v4-pro"];
   if (lower.includes("deepseek-reasoner")) return MODEL_PRICING["deepseek-reasoner"];
   if (lower.includes("deepseek-chat")) return MODEL_PRICING["deepseek-chat"];
+  if (lower.includes("grok-4.5") && lower.includes("fast")) return MODEL_PRICING["cursor-grok-4.5-fast"];
+  if (lower.includes("grok-4.5")) return MODEL_PRICING["cursor-grok-4.5"];
   if (lower.includes("grok-build")) return MODEL_PRICING["grok-build"];
   if (lower.includes("grok-4-fast")) return MODEL_PRICING["grok-4-fast"];
   // grok-4-1-fast-* must precede the generic grok-4 matcher. Cloud rows may

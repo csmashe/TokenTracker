@@ -119,6 +119,31 @@ function normalizeClaudeModel(model) {
   return m;
 }
 
+// Cursor decorates model ids with reasoning effort and sometimes places the
+// Claude version before the tier. Normalize those lookup-only aliases while
+// preserving Grok 4.5's distinct Fast SKU (its rate is not the base rate).
+function normalizeCursorModel(model) {
+  if (!model || typeof model !== "string") return model;
+  let m = model
+    .trim()
+    .replace(/\([^)]*\)/g, " ")
+    .toLowerCase()
+    .replace(/[^a-z0-9.]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .replace(/-{2,}/g, "-");
+  const parts = m.split("-");
+  const isFast = parts.includes("fast");
+
+  if (/^(?:cursor-)?grok-4[.-]5(?:-|$)/.test(m)) {
+    return isFast ? "cursor-grok-4.5-fast" : "cursor-grok-4.5";
+  }
+
+  const decorations = new Set(["thinking", "xhigh", "high", "medium", "low", "fast"]);
+  m = parts.filter((part) => !decorations.has(part)).join("-");
+  if (m.startsWith("claude-")) return normalizeClaudeModel(m);
+  return m;
+}
+
 // WorkBuddy's auto-router records the model as the literal "auto" and never
 // exposes the underlying model it picked. That collides with Cursor's curated
 // alias ("auto" -> "composer-1"), which would misprice WorkBuddy usage as
@@ -141,6 +166,7 @@ function normalizeWorkbuddyModel(model) {
 const SOURCE_MODEL_NORMALIZERS = {
   antigravity: normalizeAntigravityModel,
   claude: normalizeClaudeModel,
+  cursor: normalizeCursorModel,
   "pi-anthropic": normalizeClaudeModel,
   zed: normalizeZedModel,
   workbuddy: normalizeWorkbuddyModel,
@@ -337,6 +363,7 @@ module.exports = {
   stripReasoningSuffix,
   normalizeAntigravityModel,
   normalizeClaudeModel,
+  normalizeCursorModel,
   normalizeZedModel,
   convertLitellmEntry,
   buildLitellmPerMillionMap,

@@ -396,6 +396,25 @@ test("matcher: Claude normalization handles relay/gateway ids (#212)", () => {
   assert.equal(matcher.normalizeClaudeModel("claude-3-opus-20240229"), "claude-3-opus-20240229");
 });
 
+test("matcher: Cursor normalization preserves Grok Fast and canonicalizes Claude aliases", () => {
+  assert.equal(
+    matcher.normalizeCursorModel("cursor-grok-4.5-high-fast"),
+    "cursor-grok-4.5-fast",
+  );
+  assert.equal(
+    matcher.normalizeCursorModel("cursor-grok-4.5-high"),
+    "cursor-grok-4.5",
+  );
+  assert.equal(
+    matcher.normalizeCursorModel("claude-4.6-opus-medium-thinking"),
+    "claude-opus-4-6",
+  );
+  assert.equal(
+    matcher.normalizeCursorModel("claude-4.5-haiku-thinking"),
+    "claude-haiku-4-5",
+  );
+});
+
 test("matcher: Zed normalization only applies to the zed source", () => {
   const litellm = { "claude-opus-4-8": { input: 5, output: 25 } };
   const curated = { exact: {}, alias: {}, fuzzy: [] };
@@ -659,6 +678,29 @@ test("index: getModelPricing resolves Claude Opus 4.8 aliases from CURATED", asy
     conversation_count: 2,
   });
   assert.equal(issueRowCost, 9.49369925);
+});
+
+test("index: getModelPricing resolves Cursor Grok and version-first Claude aliases (#358)", () => {
+  const rates = (model) => {
+    const { input, output, cache_read, cache_write } = model;
+    return { input, output, cache_read, cache_write };
+  };
+  assert.deepEqual(
+    rates(pricing.getModelPricing("cursor-grok-4.5-high-fast", { source: "cursor" })),
+    { input: 4, output: 18, cache_read: 1, cache_write: 0 },
+  );
+  assert.deepEqual(
+    rates(pricing.getModelPricing("cursor-grok-4.5-high", { source: "cursor" })),
+    { input: 2, output: 6, cache_read: 0.5, cache_write: 0 },
+  );
+  assert.deepEqual(
+    rates(pricing.getModelPricing("claude-4.6-opus-medium-thinking", { source: "cursor" })),
+    { input: 5, output: 25, cache_read: 0.5, cache_write: 6.25 },
+  );
+  assert.deepEqual(
+    rates(pricing.getModelPricing("claude-4.5-haiku-thinking", { source: "cursor" })),
+    { input: 1, output: 5, cache_read: 0.1, cache_write: 1.25 },
+  );
 });
 
 test("index: getModelPricing finds LiteLLM mainstream models with correct unit conversion", async () => {

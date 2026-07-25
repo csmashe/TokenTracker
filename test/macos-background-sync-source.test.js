@@ -14,6 +14,7 @@ test("macOS background sync sends auto background while Sync Now drains", () => 
   const viewModel = read("TokenTrackerBar/TokenTrackerBar/ViewModels/DashboardViewModel.swift");
   const refreshPolicy = read("TokenTrackerBar/TokenTrackerBar/Models/BackgroundRefreshPolicy.swift");
   const appDelegate = read("TokenTrackerBar/TokenTrackerBar/TokenTrackerBarApp.swift");
+  const statusBarController = read("TokenTrackerBar/TokenTrackerBar/Services/StatusBarController.swift");
 
   assert.match(
     apiClient,
@@ -21,7 +22,7 @@ test("macOS background sync sends auto background while Sync Now drains", () => 
   );
   assert.match(
     apiClient,
-    /if drain \{[\s\S]*Data\(#"\{"drain":true\}"#\.utf8\)[\s\S]*\} else if auto \{[\s\S]*"auto":true,"background":true,"allLocalSources":true,"publishAccount":true/,
+    /if drain \{[\s\S]*"auto":true,"background":true,"allLocalSources":true,"publishAccount":true,"drain":true[\s\S]*\} else if auto \{[\s\S]*"auto":true,"background":true,"allLocalSources":true,"publishAccount":true/,
   );
   assert.match(
     viewModel,
@@ -54,7 +55,7 @@ test("macOS background sync sends auto background while Sync Now drains", () => 
   );
   assert.match(
     viewModel,
-    /func triggerSync\(\)[\s\S]*APIClient\.shared\.triggerSync\(drain: true\)/,
+    /private func performManualSync\(\)[\s\S]*APIClient\.shared\.triggerSync\(drain: true\)/,
   );
   assert.match(refreshPolicy, /static let defaultSyncInterval: TimeInterval = 300/);
   assert.match(
@@ -92,5 +93,10 @@ test("macOS background sync sends auto background while Sync Now drains", () => 
     widgetWriter,
     /func hasConfiguredWidgets\(\) async -> Bool[\s\S]*getCurrentConfigurations[\s\S]*!configurations\.isEmpty[\s\S]*resume\(returning: true\)/,
     "Widget discovery should avoid full hidden loads when unused and fail toward freshness on query errors.",
+  );
+  assert.match(
+    statusBarController,
+    /private func selectedMenuBarSummaries\(\)[\s\S]*desktopPetController\.isVisible[\s\S]*summaries\.formUnion\(\[\.today, \.rolling\]\)/,
+    "Queue writes must refresh the visible pet's today and rolling totals even when menu-bar stats are hidden.",
   );
 });

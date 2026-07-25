@@ -225,6 +225,8 @@ const MODEL_PRICING: Record<string, { input: number; output: number; cache_read:
   //    Grok parser emits cache_creation_input_tokens = 0, so cache_write is
   //    omitted — same as the canonical table). ──
   "grok-build": { input: 1.25, output: 2.50, cache_read: 0.20 },
+  "cursor-grok-4.5": { input: 2, output: 6, cache_read: 0.5, cache_write: 0 },
+  "cursor-grok-4.5-fast": { input: 4, output: 18, cache_read: 1, cache_write: 0 },
   "grok-4-0709": { input: 3.00, output: 15.00, cache_read: 0.75 },
   "grok-4": { input: 3.00, output: 15.00, cache_read: 0.75 },
   "grok-4-latest": { input: 3.00, output: 15.00, cache_read: 0.75 },
@@ -318,6 +320,8 @@ function getModelPricing(model: string) {
   if (lower.includes("deepseek-v4-pro")) return MODEL_PRICING["deepseek-v4-pro"];
   if (lower.includes("deepseek-reasoner")) return MODEL_PRICING["deepseek-reasoner"];
   if (lower.includes("deepseek-chat")) return MODEL_PRICING["deepseek-chat"];
+  if (lower.includes("grok-4.5") && lower.includes("fast")) return MODEL_PRICING["cursor-grok-4.5-fast"];
+  if (lower.includes("grok-4.5")) return MODEL_PRICING["cursor-grok-4.5"];
   if (lower.includes("grok-build")) return MODEL_PRICING["grok-build"];
   if (lower.includes("grok-4-fast")) return MODEL_PRICING["grok-4-fast"];
   // grok-4-1-fast-* must precede the generic grok-4 matcher. Cloud rows may
@@ -537,9 +541,19 @@ export default async function (req: Request): Promise<Response> {
   if (req.method !== "GET") return json({ error: "Method not allowed" }, 405);
 
   const url = new URL(req.url);
-  const from = url.searchParams.get("from") || "";
+  let from = url.searchParams.get("from") || "";
   const to = url.searchParams.get("to") || "";
   if (!from || !to) return json({ error: "Missing from/to" }, 400);
+  // Bound the span: every distinct range is a cold fill for the shared PG
+  // cache and a full-history scan, so arbitrary from/to must not be accepted
+  // verbatim. 3 years covers every real "total" view for years to come.
+  const MAX_RANGE_DAYS = 1095;
+  const fromMs = Date.parse(`${from}T00:00:00Z`);
+  const toMs = Date.parse(`${to}T00:00:00Z`);
+  if (Number.isFinite(fromMs) && Number.isFinite(toMs) && toMs > fromMs) {
+    const maxFromMs = toMs - MAX_RANGE_DAYS * 86_400_000;
+    if (fromMs < maxFromMs) from = new Date(maxFromMs).toISOString().slice(0, 10);
+  }
   const tz = url.searchParams.get("tz") || null;
   const tzOffsetRaw = url.searchParams.get("tz_offset_minutes");
   const tzOffsetMinutes = tzOffsetRaw != null && tzOffsetRaw !== "" ? Number(tzOffsetRaw) : null;

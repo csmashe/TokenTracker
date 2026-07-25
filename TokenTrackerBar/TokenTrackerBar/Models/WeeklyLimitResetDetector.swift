@@ -15,6 +15,31 @@ struct LimitResetEvent: Equatable {
     let previousPercent: Double
 }
 
+/// Brand artwork lookup shared by the reset event and its macOS celebration UI.
+/// Asset-catalog providers and bundled-dashboard SVG providers are kept separate
+/// because SwiftUI loads them through different APIs.
+enum LimitResetProviderIconCatalog {
+    static func assetName(for provider: String) -> String? {
+        // These providers are monochrome in the existing asset catalog. Route
+        // them through their SVG so the toast can request the dark-mode color.
+        guard svgFilename(for: provider) == nil else { return nil }
+        return LimitsSettingsStore.iconNames[provider]
+    }
+
+    static func svgFilename(for provider: String) -> String? {
+        switch provider {
+        case "cursor": return "cursor.svg"
+        case "kimi": return "kimi.svg"
+        case "kiro": return "kiro.svg"
+        case "grok": return "grok.svg"
+        case "copilot": return "copilot.svg"
+        case "zcode": return "zcode.svg"
+        case "opencodeGo": return "opencode.svg"
+        default: return nil
+        }
+    }
+}
+
 /// Detects when a usage-limit window "resets" (rolls over) *after* the user had
 /// been meaningfully constrained. Mirrors the idea behind CodexBar's
 /// weekly-limit-reset detector but generalized to any provider window.
@@ -100,9 +125,16 @@ struct WeeklyLimitResetDetector {
 
 extension WeeklyLimitResetDetector {
     static let snapshotKey = "WeeklyLimitResetSnapshot"
+    static let toastEnabledKey = "LimitsToastOnResetEnabled"
     static let confettiEnabledKey = "LimitsConfettiOnResetEnabled"
-    /// Single source of truth for the confetti opt-out default (on by default).
+    /// Reset information and its celebratory effect are separate opt-outs.
+    static let toastEnabledDefault = true
     static let confettiEnabledDefault = true
+
+    /// Whether the informative reset toast is enabled, honoring the shared default.
+    static func toastEnabled(_ defaults: UserDefaults = .standard) -> Bool {
+        defaults.object(forKey: toastEnabledKey) as? Bool ?? toastEnabledDefault
+    }
 
     /// Whether the celebration confetti is enabled, honoring the shared default.
     static func confettiEnabled(_ defaults: UserDefaults = .standard) -> Bool {
@@ -193,6 +225,19 @@ extension UsageLimitsResponse {
         if let kimi { addGeneric("kimi", kimi.configured, kimi.error, [("primary", Strings.kimiWeeklyLabel, kimi.primaryWindow), ("secondary", Strings.kimiFiveHourLabel, kimi.secondaryWindow), ("tertiary", Strings.kimiTotalLabel, kimi.tertiaryWindow)]) }
         if let grok { addGeneric("grok", grok.configured, grok.error, [("primary", Strings.grokPrimaryLabel(periodType: grok.periodType), grok.primaryWindow), ("secondary", Strings.grokOndemandLabel, grok.secondaryWindow)]) }
         if let copilot { addGeneric("copilot", copilot.configured, copilot.error, [("primary", "Premium", copilot.primaryWindow), ("secondary", "Chat", copilot.secondaryWindow)]) }
+        if let zcode {
+            let labels = zcode.planKind == "coding-plan"
+                ? [("primary", "5h", zcode.primaryWindow), ("secondary", "Weekly", zcode.secondaryWindow), ("tertiary", "Tools", zcode.tertiaryWindow)]
+                : [("primary", "GLM-5.2", zcode.primaryWindow), ("secondary", "GLM-5-Turbo", zcode.secondaryWindow), ("tertiary", "Tools", zcode.tertiaryWindow)]
+            addGeneric("zcode", zcode.configured, zcode.error, labels)
+        }
+        if let opencodeGo {
+            addGeneric("opencodeGo", opencodeGo.configured, opencodeGo.error, [
+                ("primary", "5h", opencodeGo.primaryWindow),
+                ("secondary", "Weekly", opencodeGo.secondaryWindow),
+                ("tertiary", "Monthly", opencodeGo.tertiaryWindow),
+            ])
+        }
 
         return out
     }

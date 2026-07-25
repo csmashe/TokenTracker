@@ -12,9 +12,14 @@ import {
   getUsageMonthly,
 } from "../lib/api";
 import { useLatestRequestGuard } from "./use-latest-request-guard";
+import { touchLocalStorageCacheKey } from "../lib/local-storage-lru";
 
 const DEFAULT_MONTHS = 24;
 type AnyRecord = Record<string, any>;
+
+// Same bounded-LRU scheme as use-usage-data (keys embed range/tz/device).
+const TREND_CACHE_INDEX_KEY = "tokentracker.trend-cache-index";
+const TREND_CACHE_MAX_ENTRIES = 24;
 
 export function useTrendData({
   baseUrl,
@@ -51,6 +56,15 @@ export function useTrendData({
   const sharedFrom = sharedRange?.from || from;
   const sharedTo = sharedRange?.to || to;
 
+  // Read shared rows through a ref inside `refresh` so the callback identity
+  // does NOT change on every new `sharedRows` reference (DashboardPage passes
+  // its `daily` array here, which is re-created on every fetch). Keeping
+  // `refresh` stable is what stops the aggregate refresher upstream from
+  // churning identity and driving an infinite usage-refresh loop (#360). The
+  // request guard and the mount effect below still react to shared changes.
+  const sharedStateRef = useRef({ sharedEnabled, sharedRows, sharedFrom, sharedTo });
+  sharedStateRef.current = { sharedEnabled, sharedRows, sharedFrom, sharedTo };
+
   const mode = useMemo(() => {
     if (period === "day") return "hourly";
     if (period === "total") return "monthly";
@@ -81,6 +95,7 @@ export function useTrendData({
       if (!raw) return null;
       const parsed = JSON.parse(raw);
       if (!parsed || !Array.isArray(parsed.rows)) return null;
+      touchLocalStorageCacheKey(TREND_CACHE_INDEX_KEY, storageKey, TREND_CACHE_MAX_ENTRIES);
       return parsed;
     } catch (_e) {
       return null;
@@ -92,6 +107,7 @@ export function useTrendData({
       if (!storageKey || typeof window === "undefined") return;
       try {
         window.localStorage.setItem(storageKey, JSON.stringify(payload));
+        touchLocalStorageCacheKey(TREND_CACHE_INDEX_KEY, storageKey, TREND_CACHE_MAX_ENTRIES);
       } catch (_e) {
         // ignore write errors
       }
@@ -148,9 +164,15 @@ export function useTrendData({
 
   const refresh = useCallback(async () => {
     const isCurrent = beginRequest();
-    if (sharedEnabled) {
-      setRows(Array.isArray(sharedRows) ? sharedRows : []);
-      setRange({ from: sharedFrom, to: sharedTo });
+    const {
+      sharedEnabled: sharedEnabledNow,
+      sharedRows: sharedRowsNow,
+      sharedFrom: sharedFromNow,
+      sharedTo: sharedToNow,
+    } = sharedStateRef.current;
+    if (sharedEnabledNow) {
+      setRows(Array.isArray(sharedRowsNow) ? sharedRowsNow : []);
+      setRange({ from: sharedFromNow, to: sharedToNow });
       setSource("shared");
       setFetchedAt(null);
       setLoading(false);
@@ -322,10 +344,6 @@ export function useTrendData({
     months,
     readCache,
     tokenReady,
-    sharedEnabled,
-    sharedFrom,
-    sharedRows,
-    sharedTo,
     timeZone,
     to,
     tzOffsetMinutes,

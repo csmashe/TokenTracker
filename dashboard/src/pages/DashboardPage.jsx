@@ -52,6 +52,7 @@ import { DashboardView } from "../ui/dashboard/views/DashboardView.jsx";
 import { useAccountDevices } from "../hooks/use-account-devices.js";
 import { DeviceUsageCard } from "../ui/dashboard/components/DeviceUsageCard.jsx";
 import { formatDeviceLabel } from "../lib/device-label.js";
+import { CLOUD_USAGE_SYNCED_EVENT, getCurrentDeviceId } from "../lib/cloud-sync-prefs";
 import { ShareModal } from "../ui/share/ShareModal";
 import { useShareCardData } from "../ui/share/use-share-card-data";
 
@@ -360,6 +361,16 @@ export function DashboardPage({
   const to = range.to;
 
   const [selectedDevice, setSelectedDevice] = useState(null);
+  const [currentDeviceId, setCurrentDeviceId] = useState(() => getCurrentDeviceId());
+  useEffect(() => {
+    const refreshCurrentDevice = () => setCurrentDeviceId(getCurrentDeviceId());
+    window.addEventListener(CLOUD_USAGE_SYNCED_EVENT, refreshCurrentDevice);
+    window.addEventListener("storage", refreshCurrentDevice);
+    return () => {
+      window.removeEventListener(CLOUD_USAGE_SYNCED_EVENT, refreshCurrentDevice);
+      window.removeEventListener("storage", refreshCurrentDevice);
+    };
+  }, []);
   const { devices: accountDevices, accountSources: accountDeviceSources, refresh: refreshAccountDevices } = useAccountDevices({
     from,
     to,
@@ -373,8 +384,10 @@ export function DashboardPage({
   // zero-usage registration (typically a stale fingerprint-drift duplicate) is
   // noise in both the filter dropdown and the breakdown card.
   const activeDevices = useMemo(
-    () => accountDevices.filter((d) => (Number(d.total_tokens) || 0) > 0),
-    [accountDevices],
+    () => accountDevices
+      .filter((d) => (Number(d.total_tokens) || 0) > 0)
+      .map((d) => ({ ...d, isCurrent: d.id === currentDeviceId })),
+    [accountDevices, currentDeviceId],
   );
   const accountSourceRows = useMemo(
     () => accountDeviceSources.filter((s) => (Number(s.total_tokens) || 0) > 0),
@@ -400,10 +413,11 @@ export function DashboardPage({
     if (!showDeviceFilter) return [];
     return [
       { value: "", label: copy("dashboard.device_filter.all") },
-      ...activeDevices.map((d) => ({
-        value: d.id,
-        label: formatDeviceLabel(d) || copy("dashboard.device_card.unnamed"),
-      })),
+      ...activeDevices.map((d) => {
+        const deviceLabel = formatDeviceLabel(d) || copy("dashboard.device_card.unnamed");
+        const currentSuffix = d.isCurrent ? ` (${copy("dashboard.device_card.current")})` : "";
+        return { value: d.id, label: `${deviceLabel}${currentSuffix}` };
+      }),
     ];
   }, [showDeviceFilter, activeDevices, resolvedLocale]);
 
@@ -411,6 +425,7 @@ export function DashboardPage({
     <DeviceUsageCard
       devices={activeDevices}
       accountSources={accountSourceRows}
+      currentDeviceId={currentDeviceId}
       selectedDeviceId={selectedDevice || ""}
       onSelectDevice={(id) => setSelectedDevice(id || null)}
       onRenameDevice={async (id, name) => {
@@ -887,6 +902,18 @@ export function DashboardPage({
     refreshUsageLimits,
   ]);
 
+  // Hold the latest aggregate refresher in a ref so the mount / auto-refresh
+  // effects below can call it WITHOUT listing it as a dependency.
+  // `refreshUsageStats` changes identity whenever any child refresh callback
+  // does — notably `refreshTrend`, whose identity flips on every new `daily`
+  // array reference. If the effects depended on it, the local-reload effect
+  // would re-fire a full refresh on every render, and each refresh mints a new
+  // `daily`, closing an infinite usage-refresh loop (#360).
+  const refreshUsageStatsRef = useRef(refreshUsageStats);
+  useEffect(() => {
+    refreshUsageStatsRef.current = refreshUsageStats;
+  }, [refreshUsageStats]);
+
   // The DMG starts its embedded server with --no-sync, so a page reload used
   // to fetch the same stale queue again. Refresh all local log/database sources
   // (Claude, Gemini, OpenCode, Codex, etc.) without doing cloud upload, Cursor
@@ -906,7 +933,7 @@ export function DashboardPage({
     let active = true;
     localReloadSyncPromiseRef.current
       .then(() => {
-        if (active) return refreshUsageStats();
+        if (active) return refreshUsageStatsRef.current();
         return undefined;
       })
       .catch((error) => {
@@ -915,7 +942,7 @@ export function DashboardPage({
     return () => {
       active = false;
     };
-  }, [isLocalMode, mockEnabled, accountView, refreshUsageStats]);
+  }, [isLocalMode, mockEnabled, accountView]);
 
   // Provider hooks update the queue quickly, while the native server also
   // performs a once-per-minute all-source fallback scan. Re-read the local
@@ -924,12 +951,12 @@ export function DashboardPage({
   useEffect(() => {
     if (!isLocalMode || mockEnabled || accountView) return undefined;
     const autoRefresh = startLocalUsageAutoRefresh({
-      refresh: refreshUsageStats,
+      refresh: () => refreshUsageStatsRef.current(),
       onError: (error) =>
         console.warn("[DashboardPage] Automatic usage refresh failed:", error),
     });
     return () => autoRefresh.stop();
-  }, [isLocalMode, mockEnabled, accountView, refreshUsageStats]);
+  }, [isLocalMode, mockEnabled, accountView]);
 
   const handleUsageRefresh = useCallback(async () => {
     setManualSyncLoading(true);

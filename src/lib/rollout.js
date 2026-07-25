@@ -7351,6 +7351,35 @@ function resolveOmpDefaultModel() {
   return "omp-unknown";
 }
 
+const OMP_HEADER_SCAN_MAX_BYTES = 65536;
+
+async function resolveOmpFileCwd(filePath) {
+  let stream;
+  try {
+    stream = fssync.createReadStream(filePath, {
+      encoding: "utf8",
+      start: 0,
+      end: OMP_HEADER_SCAN_MAX_BYTES,
+    });
+  } catch {
+    return null;
+  }
+  const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
+  try {
+    for await (const line of rl) {
+      if (!line || !line.includes('"session"')) continue;
+      let entry;
+      try { entry = JSON.parse(line); } catch { continue; }
+      if (entry?.type !== "session") continue;
+      return typeof entry.cwd === "string" && entry.cwd.trim() ? entry.cwd.trim() : null;
+    }
+  } finally {
+    rl.close();
+    stream.close?.();
+  }
+  return null;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Kilo Code VS Code extension — passive reader for VS Code-family
 // globalStorage/kilocode.kilo-code/tasks/<uuid>/ui_messages.json files.
@@ -9384,16 +9413,26 @@ async function parseOmpIncremental({
   subagentFiles,
   cursors,
   queuePath,
+  projectQueuePath,
+  publicRepoResolver,
   onProgress,
   env,
   defaultModel,
 } = {}) {
   await ensureDir(path.dirname(queuePath));
+  const projectEnabled = typeof projectQueuePath === "string" && projectQueuePath.length > 0;
   const ompState = cursors.omp && typeof cursors.omp === "object" ? cursors.omp : {};
   const seenIds = new Set(Array.isArray(ompState.seenIds) ? ompState.seenIds : []);
+  const projectSeenIds = new Set(
+    Array.isArray(ompState.projectSeenIds) ? ompState.projectSeenIds : [],
+  );
   const fileOffsets =
     ompState.fileOffsets && typeof ompState.fileOffsets === "object"
       ? { ...ompState.fileOffsets }
+      : {};
+  const projectFileOffsets =
+    ompState.projectFileOffsets && typeof ompState.projectFileOffsets === "object"
+      ? { ...ompState.projectFileOffsets }
       : {};
 
   const mainFiles = Array.isArray(sessionFiles)
@@ -9416,13 +9455,28 @@ async function parseOmpIncremental({
       ...ompState,
       seenIds: Array.from(seenIds),
       fileOffsets,
+      ...(projectEnabled
+        ? {
+            projectSeenIds: Array.from(projectSeenIds),
+            projectFileOffsets,
+          }
+        : {}),
       updatedAt: new Date().toISOString(),
     };
-    return { recordsProcessed: 0, eventsAggregated: 0, bucketsQueued: 0 };
+    return {
+      recordsProcessed: 0,
+      eventsAggregated: 0,
+      bucketsQueued: 0,
+      projectBucketsQueued: 0,
+    };
   }
 
   const hourlyState = normalizeHourlyState(cursors?.hourly);
   const touchedBuckets = new Set();
+  const projectState = projectEnabled ? normalizeProjectState(cursors?.projectHourly) : null;
+  const projectTouchedBuckets = projectEnabled ? new Set() : null;
+  const projectMetaCache = projectEnabled ? new Map() : null;
+  const publicRepoCache = projectEnabled ? new Map() : null;
   const cb = typeof onProgress === "function" ? onProgress : null;
   let recordsProcessed = 0;
   let eventsAggregated = 0;
@@ -9552,28 +9606,169 @@ async function parseOmpIncremental({
     };
   }
 
+  // Project attribution has an independent cursor so upgrading an existing
+  // installation can backfill already-consumed OMP sessions without adding
+  // those messages to the total-usage buckets a second time. Current OMP
+  // session headers persist the real cwd; unlike the encoded session folder,
+  // it is lossless even when path components contain dashes.
+  if (projectEnabled) {
+    for (const filePath of files) {
+      let stat;
+      try { stat = fssync.statSync(filePath); } catch { continue; }
+
+      const prevEntry = projectFileOffsets[filePath] || {};
+      const prevSize = Number(prevEntry.size) || 0;
+      const prevIno = prevEntry.ino;
+      const inodeChanged = typeof prevIno === "number" && prevIno !== stat.ino;
+      const startOffset = stat.size < prevSize || inodeChanged ? 0 : prevSize;
+      if (stat.size <= startOffset) continue;
+
+      const cwd = await resolveOmpFileCwd(filePath);
+      const projectContext = cwd
+        ? await resolveProjectContextForPath({
+            startDir: cwd,
+            projectMetaCache,
+            publicRepoCache,
+            publicRepoResolver,
+            projectState,
+          })
+        : null;
+      const projectRef = projectContext?.projectRef || null;
+      const projectKey = projectContext?.projectKey || null;
+
+      if (projectKey && projectRef) {
+        let stream;
+        try {
+          stream = fssync.createReadStream(filePath, {
+            encoding: "utf8",
+            start: startOffset,
+          });
+        } catch {
+          continue;
+        }
+        const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
+        for await (const line of rl) {
+          if (!line || !line.trim()) continue;
+          let entry;
+          try { entry = JSON.parse(line); } catch { continue; }
+          const msg = entry?.type === "message" ? entry.message : null;
+          const usage = msg?.role === "assistant" ? msg.usage : null;
+          if (!usage || typeof usage !== "object") continue;
+
+          const entryId = typeof entry.id === "string" && entry.id ? entry.id : null;
+          if (!entryId || projectSeenIds.has(entryId)) continue;
+
+          const input = toNonNegativeInt(usage.input);
+          const output = toNonNegativeInt(usage.output);
+          const cacheRead = toNonNegativeInt(usage.cacheRead);
+          const cacheWrite = toNonNegativeInt(usage.cacheWrite);
+          const reasoningTokens = toNonNegativeInt(usage.reasoningTokens);
+          if (
+            input === 0 &&
+            output === 0 &&
+            cacheRead === 0 &&
+            cacheWrite === 0 &&
+            reasoningTokens === 0
+          ) {
+            projectSeenIds.add(entryId);
+            continue;
+          }
+
+          let tsMs = null;
+          if (Number.isFinite(Number(msg.timestamp)) && Number(msg.timestamp) > 0) {
+            tsMs = Number(msg.timestamp);
+          } else if (typeof entry.timestamp === "string" && entry.timestamp) {
+            const parsed = Date.parse(entry.timestamp);
+            if (Number.isFinite(parsed) && parsed > 0) tsMs = parsed;
+          }
+          const bucketStart = tsMs == null
+            ? null
+            : toUtcHalfHourStart(new Date(tsMs).toISOString());
+          if (!bucketStart) {
+            projectSeenIds.add(entryId);
+            continue;
+          }
+
+          const totalTokens =
+            Number.isFinite(Number(usage.totalTokens)) && Number(usage.totalTokens) > 0
+              ? toNonNegativeInt(usage.totalTokens)
+              : input + output + cacheRead + cacheWrite + reasoningTokens;
+          const delta = {
+            input_tokens: input,
+            cached_input_tokens: cacheRead,
+            cache_creation_input_tokens: cacheWrite,
+            output_tokens: output,
+            reasoning_output_tokens: reasoningTokens,
+            total_tokens: totalTokens,
+            conversation_count: 1,
+          };
+          const projectBucket = getProjectBucket(
+            projectState,
+            projectKey,
+            "omp",
+            bucketStart,
+            projectRef,
+          );
+          addTotals(projectBucket.totals, delta);
+          projectTouchedBuckets.add(projectBucketKey(projectKey, "omp", bucketStart));
+          projectSeenIds.add(entryId);
+        }
+      }
+
+      let postStat = stat;
+      try { postStat = fssync.statSync(filePath); } catch {}
+      projectFileOffsets[filePath] = {
+        size: postStat.size,
+        mtimeMs: postStat.mtimeMs,
+        ino: postStat.ino,
+      };
+    }
+  }
+
   // Cap dedup set to last 10k IDs to bound cursor state size — same convention
   // as Kimi/CodeBuddy/Copilot so cursors.json doesn't grow unbounded.
   const seenArr = Array.from(seenIds);
   const cappedSeen =
     seenArr.length > 10_000 ? seenArr.slice(seenArr.length - 10_000) : seenArr;
+  const projectSeenArr = Array.from(projectSeenIds);
+  const cappedProjectSeen =
+    projectSeenArr.length > 10_000
+      ? projectSeenArr.slice(projectSeenArr.length - 10_000)
+      : projectSeenArr;
 
   const bucketsQueued = await enqueueTouchedBuckets({
     queuePath,
     hourlyState,
     touchedBuckets,
   });
+  const projectBucketsQueued = projectEnabled
+    ? await enqueueTouchedProjectBuckets({
+        projectQueuePath,
+        projectState,
+        projectTouchedBuckets,
+      })
+    : 0;
   const updatedAt = new Date().toISOString();
   hourlyState.updatedAt = updatedAt;
   cursors.hourly = hourlyState;
+  if (projectState) {
+    projectState.updatedAt = updatedAt;
+    cursors.projectHourly = projectState;
+  }
   cursors.omp = {
     ...ompState,
     seenIds: cappedSeen,
     fileOffsets,
+    ...(projectEnabled
+      ? {
+          projectSeenIds: cappedProjectSeen,
+          projectFileOffsets,
+        }
+      : {}),
     updatedAt,
   };
 
-  return { recordsProcessed, eventsAggregated, bucketsQueued };
+  return { recordsProcessed, eventsAggregated, bucketsQueued, projectBucketsQueued };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

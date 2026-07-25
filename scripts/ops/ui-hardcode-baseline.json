@@ -1,13 +1,13 @@
 {
-  "generatedAt": "2026-07-18T14:32:38.830Z",
+  "generatedAt": "2026-07-24T15:17:23.210Z",
   "root": "dashboard/src",
   "rules": {
     "colors": "hex/rgb(a) literals",
     "rawText": "JSX text nodes containing letters or digits"
   },
   "totals": {
-    "colors": 371,
-    "rawText": 192
+    "colors": 377,
+    "rawText": 155
   },
   "files": {
     "dashboard/src/components/InsforgeUserHeaderControls.jsx": {
@@ -37,13 +37,12 @@
     },
     "dashboard/src/components/leaderboard/CommunityStatsModal.jsx": {
       "colors": 0,
-      "rawText": 8,
+      "rawText": 7,
       "rawTextTokens": [
         "(max.value",
         "; if (normalized === \"win32\") return",
         "; return",
-        "; return (",
-        "Math.max(max, Number(band.developer_share) || 0), 0) || 1; return ("
+        "; return ("
       ]
     },
     "dashboard/src/components/leaderboard/LeaderboardProfileModal.jsx": {
@@ -76,6 +75,18 @@
         "setIsOpen(false), []); return ("
       ]
     },
+    "dashboard/src/hooks/use-trend-data.issue360.test.tsx": {
+      "colors": 2,
+      "rawText": 2,
+      "rawTextTokens": [
+        "); rerender("
+      ]
+    },
+    "dashboard/src/hooks/use-trend-data.ts": {
+      "colors": 1,
+      "rawText": 0,
+      "rawTextTokens": []
+    },
     "dashboard/src/pages/AchievementsPage.jsx": {
       "colors": 0,
       "rawText": 1,
@@ -83,14 +94,10 @@
         "= 1).length, [merged], ); const total = BADGE_CATALOG.length; return ("
       ]
     },
-    "dashboard/src/pages/DevicePage.jsx": {
-      "colors": 0,
-      "rawText": 3,
-      "rawTextTokens": [
-        "Approve your CLI",
-        "CLI code",
-        "Sign in first, then return to this page."
-      ]
+    "dashboard/src/pages/DashboardPage.jsx": {
+      "colors": 1,
+      "rawText": 0,
+      "rawTextTokens": []
     },
     "dashboard/src/pages/IpCheckPage.jsx": {
       "colors": 12,
@@ -131,6 +138,13 @@
         "Token Tracker"
       ]
     },
+    "dashboard/src/pages/SessionsPage.jsx": {
+      "colors": 0,
+      "rawText": 1,
+      "rawTextTokens": [
+        ") : filtered.length === 0 ? ("
+      ]
+    },
     "dashboard/src/pages/SkillDetailPanel.jsx": {
       "colors": 2,
       "rawText": 1,
@@ -153,39 +167,21 @@
     },
     "dashboard/src/pages/WidgetsPage.jsx": {
       "colors": 25,
-      "rawText": 9,
+      "rawText": 6,
       "rawTextTokens": [
         "$129.56 ±0%",
         "$673.61",
         "0 ? (",
         "10.3B",
         "203.2M",
-        "7 DAYS",
-        "880.9M",
-        "TODAY",
-        "tokens · 202 active days"
+        "880.9M"
       ]
     },
     "dashboard/src/pages/WrappedPage.jsx": {
       "colors": 0,
-      "rawText": 18,
+      "rawText": 3,
       "rawTextTokens": [
-        "0 && (",
-        "Highlights",
-        "Loading…",
-        "Longest streak",
-        "No data for that year yet. Run",
-        "Peak hour",
-        "TokenTracker Wrapped",
-        "Top days",
-        "Top models",
-        "Top tools",
-        "Total tokens",
-        "across",
-        "first.",
-        "tools",
-        "tracker sync",
-        "tracker wrapped --json"
+        "0 && ("
       ]
     },
     "dashboard/src/pet.jsx": {
@@ -254,11 +250,16 @@
         "/\\d/.test(char) && (decimalIndex === -1 || index"
       ]
     },
-    "dashboard/src/ui/components/HeaderGithubStar.jsx": {
+    "dashboard/src/ui/components/SearchableSelect.jsx": {
+      "colors": 2,
+      "rawText": 0,
+      "rawTextTokens": []
+    },
+    "dashboard/src/ui/components/SegmentedControl.jsx": {
       "colors": 0,
       "rawText": 1,
       "rawTextTokens": [
-        "Star"
+        "option.id === optionId); if (index"
       ]
     },
     "dashboard/src/ui/components/Shell.jsx": {
@@ -270,30 +271,24 @@
     },
     "dashboard/src/ui/components/Sidebar.jsx": {
       "colors": 0,
-      "rawText": 3,
+      "rawText": 2,
       "rawTextTokens": [
-        "Star",
         "Token Tracker",
         "getNavGroups(), [resolvedLocale]); return ("
       ]
     },
     "dashboard/src/ui/dashboard/components/ActivityHeatmap.jsx": {
       "colors": 28,
-      "rawText": 4,
+      "rawText": 1,
       "rawTextTokens": [
-        "0 ? (",
-        "3D Insight",
-        "Model Breakdown",
-        "Tokens"
+        "0 ? ("
       ]
     },
     "dashboard/src/ui/dashboard/components/ActivityHeatmap3D.jsx": {
       "colors": 53,
-      "rawText": 4,
+      "rawText": 2,
       "rawTextTokens": [
         "0 ? (",
-        "Model Breakdown",
-        "Tokens",
         "maxX) maxX = x + padding; if (y - padding"
       ]
     },
@@ -312,12 +307,8 @@
     },
     "dashboard/src/ui/dashboard/components/CostAnalysisModal.jsx": {
       "colors": 2,
-      "rawText": 3,
-      "rawTextTokens": [
-        "Cost",
-        "Model",
-        "No spend recorded."
-      ]
+      "rawText": 0,
+      "rawTextTokens": []
     },
     "dashboard/src/ui/dashboard/components/DataDetails.jsx": {
       "colors": 0,
@@ -385,15 +376,11 @@
     },
     "dashboard/src/ui/dashboard/components/TrendMonitor.jsx": {
       "colors": 30,
-      "rawText": 9,
+      "rawText": 5,
       "rawTextTokens": [
         "0 && (",
         "0 ? (",
         "0) && (",
-        "No data yet",
-        "Predicted",
-        "Tokens",
-        "Unsynced",
         "sum + s.value, 0); const renderFlat = kind !== \"real\" || totalSegmentsValue"
       ]
     },
@@ -423,11 +410,17 @@
     },
     "dashboard/src/ui/dashboard/components/UsageOverview.jsx": {
       "colors": 13,
-      "rawText": 3,
+      "rawText": 2,
       "rawTextTokens": [
         "0 && (",
-        "0); return (",
         "1 ? ("
+      ]
+    },
+    "dashboard/src/ui/dashboard/components/__tests__/ActivityHeatmap.test.jsx": {
+      "colors": 0,
+      "rawText": 1,
+      "rawTextTokens": [
+        "); return render( tokenFormatValue ?"
       ]
     },
     "dashboard/src/ui/dashboard/components/__tests__/ActivityHeatmap3D.test.jsx": {
@@ -437,6 +430,13 @@
         ").container; // The top face is rendered last in each cell",
         ").container; const darkSvg = render(",
         "g\"); expect(groups.length).toBe(2); //"
+      ]
+    },
+    "dashboard/src/ui/dashboard/components/__tests__/DataDetailsProjects.test.jsx": {
+      "colors": 0,
+      "rawText": 1,
+      "rawTextTokens": [
+        "); const result = render( tokenFormatValue ?"
       ]
     },
     "dashboard/src/ui/dashboard/components/__tests__/TrendMonitor.test.jsx": {
@@ -492,19 +492,13 @@
     },
     "dashboard/src/ui/marketing/v3/HowItWorksSection.jsx": {
       "colors": 0,
-      "rawText": 11,
+      "rawText": 5,
       "rawTextTokens": [
         "103,763",
         "12,482",
         "3,067",
         "6,830,736,916",
-        "88,214",
-        "claude",
-        "total tokens",
-        "⏺ editing src/lib/rollout.js",
-        "⏺ thinking…",
-        "▌ appended locally",
-        "✓ 3 files changed"
+        "88,214"
       ]
     },
     "dashboard/src/ui/marketing/v3/LeaderboardSection.jsx": {

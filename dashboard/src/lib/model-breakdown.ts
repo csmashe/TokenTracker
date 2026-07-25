@@ -20,6 +20,35 @@ function resolveModelName(model: any, fallback: any) {
   return fallback;
 }
 
+function buildBareModelNameIndex(models: any[]) {
+  const bareNames = new Map();
+  const weights = new Map();
+  for (const model of models) {
+    const name = typeof model?.name === "string" ? model.name.trim() : "";
+    const key = normalizeModelId(name);
+    if (!key || key.includes("/")) continue;
+    const weight = Math.max(0, toFiniteNumber(model?.weight) ?? 0);
+    if (!bareNames.has(key) || weight >= (weights.get(key) || 0)) {
+      bareNames.set(key, name);
+      weights.set(key, weight);
+    }
+  }
+  return bareNames;
+}
+
+function resolveAggregateModelIdentity(name: string, bareNames: Map<string, string>) {
+  const normalized = normalizeModelId(name);
+  if (!normalized) return null;
+  const slash = normalized.lastIndexOf("/");
+  if (slash > 0) {
+    const suffix = normalized.slice(slash + 1);
+    if (bareNames.has(suffix)) {
+      return { key: suffix, name: bareNames.get(suffix) };
+    }
+  }
+  return { key: normalized, name };
+}
+
 export function resolveDisplayTokens(totals: any, fallback = 0) {
   const billableTokens = toFiniteNumber(totals?.billable_total_tokens);
   const totalTokens = toFiniteNumber(totals?.total_tokens);
@@ -108,6 +137,82 @@ export function buildFleetData(modelBreakdown: any, { copyFn }: AnyRecord = {}) 
     });
 }
 
+/**
+ * Flatten the provider-oriented fleet data into one personal model ranking.
+ * The same model name can be emitted by several tools, so names are matched
+ * case-insensitively and their token/cost totals are combined before ranking.
+ */
+export function buildAllModels(fleetData: any) {
+  const providers: any[] = Array.isArray(fleetData) ? fleetData : [];
+  const byModel = new Map();
+  const modelRows = [];
+
+  for (const provider of providers) {
+    const models: any[] = Array.isArray(provider?.models) ? provider.models : [];
+    for (const model of models) {
+      const usage = toFiniteNumber(model?.usage);
+      if (usage == null || usage <= 0) continue;
+      const name = typeof model?.name === "string" && model.name.trim()
+        ? model.name.trim()
+        : typeof model?.id === "string" && model.id.trim()
+          ? model.id.trim()
+          : null;
+      if (!name) continue;
+      modelRows.push({ model, name, usage });
+    }
+  }
+
+  const bareNames = buildBareModelNameIndex(
+    modelRows.map((row) => ({ name: row.name, weight: row.usage })),
+  );
+
+  for (const { model, name, usage } of modelRows) {
+    const identity = resolveAggregateModelIdentity(name, bareNames);
+    if (!identity) continue;
+    const { key } = identity;
+    const current = byModel.get(key) || {
+      id: key,
+      name: identity.name,
+      usage: 0,
+      cost: 0,
+      hasCost: false,
+      nameWeight: 0,
+    };
+    current.usage += usage;
+    const cost = toFiniteNumber(model?.cost);
+    if (cost != null) {
+      current.cost += cost;
+      current.hasCost = true;
+    }
+    // Preserve the spelling from the source that contributes the most.
+    if (bareNames.has(key)) {
+      current.name = bareNames.get(key);
+    } else if (usage >= current.nameWeight) {
+      current.name = name;
+      current.nameWeight = usage;
+    }
+    byModel.set(key, current);
+  }
+
+  const totalUsage = Array.from(byModel.values())
+    .reduce((sum, model) => sum + model.usage, 0);
+
+  return Array.from(byModel.values())
+    .map((model) => ({
+      id: model.id,
+      name: model.name,
+      usage: model.usage,
+      cost: model.hasCost ? model.cost : null,
+      share: totalUsage > 0
+        ? Math.round((model.usage / totalUsage) * 1000) / 10
+        : 0,
+    }))
+    .sort((a, b) => {
+      if (b.usage !== a.usage) return b.usage - a.usage;
+      return String(a.name).localeCompare(String(b.name));
+    });
+}
+
 export function buildTopModels(modelBreakdown: any, { limit = 3, copyFn }: AnyRecord = {}) {
   const safeCopy = typeof copyFn === "function" ? copyFn : (key: string) => key;
   const sources: any[] = Array.isArray(modelBreakdown?.sources) ? modelBreakdown.sources : [];
@@ -116,6 +221,7 @@ export function buildTopModels(modelBreakdown: any, { limit = 3, copyFn }: AnyRe
   const totalsByKey = new Map();
   const nameByKey = new Map();
   const nameWeight = new Map();
+  const modelRows = [];
   let totalTokensAll = 0;
 
   for (const source of sources) {
@@ -125,15 +231,24 @@ export function buildTopModels(modelBreakdown: any, { limit = 3, copyFn }: AnyRe
       if (!Number.isFinite(tokens) || tokens <= 0) continue;
       totalTokensAll += tokens;
       const name = resolveModelName(model, safeCopy("shared.placeholder.short"));
-      const key = normalizeModelId(name);
-      if (!key) continue;
+      modelRows.push({ name, tokens });
+    }
+  }
+
+  const bareNames = buildBareModelNameIndex(
+    modelRows.map((row) => ({ name: row.name, weight: row.tokens })),
+  );
+  for (const { name, tokens } of modelRows) {
+      const identity = resolveAggregateModelIdentity(name, bareNames);
+      if (!identity) continue;
+      const { key } = identity;
       totalsByKey.set(key, (totalsByKey.get(key) || 0) + tokens);
-      const currentWeight = nameWeight.get(key) || 0;
-      if (tokens >= currentWeight) {
+      if (bareNames.has(key)) {
+        nameByKey.set(key, bareNames.get(key));
+      } else if (tokens >= (nameWeight.get(key) || 0)) {
         nameWeight.set(key, tokens);
         nameByKey.set(key, name);
       }
-    }
   }
 
   if (!totalsByKey.size) return [];

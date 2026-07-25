@@ -7870,8 +7870,13 @@ test("parseKiroCliIncremental never re-adds requests whose cursor entry was age-
 
 // ─── oh-my-pi (omp) helpers ───
 
-function buildOmpSessionHeader() {
-  return JSON.stringify({ type: "session", id: "session-1", timestamp: new Date().toISOString() });
+function buildOmpSessionHeader({ cwd } = {}) {
+  return JSON.stringify({
+    type: "session",
+    id: "session-1",
+    timestamp: new Date().toISOString(),
+    ...(cwd ? { cwd } : {}),
+  });
 }
 
 function buildOmpAssistantLine({ id, model, input, output, cacheRead = 0, cacheWrite = 0, timestamp, reasoningTokens = 0, totalTokens, provider = "anthropic" }) {
@@ -8213,6 +8218,93 @@ test("parseOmpIncremental dedupes subagent entries across two runs", async () =>
 
     const res2 = await parseOmpIncremental({ sessionFiles: [], subagentFiles: [subPath], cursors, queuePath });
     assert.equal(res2.eventsAggregated, 0);
+  } finally {
+    await fs.rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test("parseOmpIncremental backfills project usage from the session header cwd", async () => {
+  const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "tt-omp-project-"));
+  try {
+    const projectDir = path.join(tmp, "workspace", "project");
+    const sessionsDir = path.join(tmp, "sessions", "--project--");
+    await fs.mkdir(path.join(projectDir, ".git"), { recursive: true });
+    await fs.mkdir(sessionsDir, { recursive: true });
+    await fs.writeFile(
+      path.join(projectDir, ".git", "config"),
+      '[remote "origin"]\n\turl = https://github.com/example/omp-project.git\n',
+      "utf8",
+    );
+
+    const filePath = path.join(sessionsDir, "session.jsonl");
+    const queuePath = path.join(tmp, "queue.jsonl");
+    const projectQueuePath = path.join(tmp, "project.queue.jsonl");
+    const cursors = { version: 1, files: {}, updatedAt: null };
+    const ts = Date.UTC(2026, 3, 5, 14, 10, 0);
+    await fs.writeFile(filePath, [
+      buildOmpSessionHeader({ cwd: projectDir }),
+      buildOmpAssistantLine({
+        id: "msg-project-1",
+        model: "claude-sonnet-4-5",
+        input: 100,
+        output: 20,
+        timestamp: ts,
+        totalTokens: 120,
+      }),
+    ].join("\n") + "\n", "utf8");
+
+    // Simulate upgrading from a version that already consumed the OMP file
+    // for total usage but did not yet support project attribution.
+    const first = await parseOmpIncremental({
+      sessionFiles: [filePath],
+      cursors,
+      queuePath,
+    });
+    assert.equal(first.eventsAggregated, 1);
+
+    const second = await parseOmpIncremental({
+      sessionFiles: [filePath],
+      cursors,
+      queuePath,
+      projectQueuePath,
+    });
+    assert.equal(second.eventsAggregated, 0, "project backfill must not re-add total usage");
+    assert.equal(second.projectBucketsQueued, 1);
+
+    const projectRows = await readJsonLines(projectQueuePath);
+    assert.equal(projectRows.length, 1);
+    assert.equal(projectRows[0].project_ref, "https://github.com/example/omp-project");
+    assert.equal(projectRows[0].project_key, "example/omp-project");
+    assert.equal(projectRows[0].source, "omp");
+    assert.equal(projectRows[0].total_tokens, 120);
+    assert.equal(projectRows[0].conversation_count, 1);
+
+    await fs.appendFile(
+      filePath,
+      buildOmpAssistantLine({
+        id: "msg-project-2",
+        model: "claude-sonnet-4-5",
+        input: 50,
+        output: 10,
+        timestamp: ts + 60_000,
+        totalTokens: 60,
+      }) + "\n",
+      "utf8",
+    );
+    const third = await parseOmpIncremental({
+      sessionFiles: [filePath],
+      cursors,
+      queuePath,
+      projectQueuePath,
+    });
+    assert.equal(third.eventsAggregated, 1);
+    assert.equal(third.projectBucketsQueued, 1);
+
+    const totalRowsAfterAppend = await readJsonLines(queuePath);
+    const projectRowsAfterAppend = await readJsonLines(projectQueuePath);
+    assert.equal(totalRowsAfterAppend.at(-1).total_tokens, 180);
+    assert.equal(projectRowsAfterAppend.at(-1).total_tokens, 180);
+    assert.equal(projectRowsAfterAppend.at(-1).conversation_count, 2);
   } finally {
     await fs.rm(tmp, { recursive: true, force: true });
   }
