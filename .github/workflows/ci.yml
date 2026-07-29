@@ -63,6 +63,58 @@ jobs:
           npm run validate:versions
           node --test test/architecture-guardrails.test.js
 
+  linux-desktop:
+    name: Linux desktop build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            dashboard/package-lock.json
+            TokenTrackerLinux/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Tauri Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            curl \
+            file \
+            libayatana-appindicator3-dev \
+            libgtk-3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            pkg-config \
+            wget
+
+      - name: Install Linux desktop dependencies
+        run: |
+          npm ci --prefix dashboard
+          npm ci --prefix TokenTrackerLinux
+
+      - name: Build dashboard
+        env:
+          VITE_INSFORGE_BASE_URL: https://srctyff5.us-east.insforge.app
+          VITE_INSFORGE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3OC0xMjM0LTU2NzgtOTBhYi1jZGVmMTIzNDU2NzgiLCJlbWFpbCI6ImFub25AaW5zZm9yZ2UuY29tIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODExNDU5NDd9.T0auta_IrVIh0uXW1bob5QSnzvsnJmN28r5XkSGEuQY
+        run: npm run dashboard:build
+
+      - name: Build bundled Node runtime
+        run: npm --prefix TokenTrackerLinux run bundle:node
+
+      - name: Test Tauri shell
+        run: cargo test --locked --manifest-path TokenTrackerLinux/src-tauri/Cargo.toml
+
+      - name: Build Tauri shell
+        run: npm --prefix TokenTrackerLinux run build
+
   macos-tests:
     name: macOS unit tests
     runs-on: macos-26
