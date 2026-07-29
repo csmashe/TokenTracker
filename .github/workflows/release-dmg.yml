@@ -196,7 +196,7 @@ jobs:
       # 2. Bundle EmbeddedServer (Node.js + tokentracker source)
       - name: Cache Node.js binaries for EmbeddedServer
         if: ${{ !inputs.no_cache }}
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: /tmp/node-cache
           key: node-darwin-universal-22.22.2
@@ -209,7 +209,7 @@ jobs:
       # 3. Generate Xcode project
       - name: Cache Homebrew bottles
         if: ${{ !inputs.no_cache }}
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/Library/Caches/Homebrew/downloads
