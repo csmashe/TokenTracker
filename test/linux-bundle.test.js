@@ -100,3 +100,78 @@ chmod +x "$destination/node-v22.22.2-linux-x64/bin/node"
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 });
+
+test("Linux bundle refuses to clean an unsafe output path", () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "tokentracker-linux-clean-"));
+  const unsafeOutput = path.join(tempDir, "important-output");
+  const sentinel = path.join(unsafeOutput, "keep.txt");
+
+  try {
+    fs.mkdirSync(unsafeOutput, { recursive: true });
+    fs.writeFileSync(sentinel, "keep me");
+
+    const result = spawnSync("bash", [bundleScript, "--clean"], {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        TOKENTRACKER_LINUX_EMBED_DIR: unsafeOutput,
+      },
+      encoding: "utf8",
+      timeout: 30_000,
+      maxBuffer: 1024 * 1024,
+    });
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /path not named EmbeddedServer/);
+    assert.equal(fs.readFileSync(sentinel, "utf8"), "keep me");
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("Linux bundle refuses to clean through a symlinked parent directory", () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "tokentracker-linux-symlink-"));
+  const realParent = path.join(tempDir, "real-parent");
+  const linkedParent = path.join(tempDir, "linked-parent");
+  const embeddedServer = path.join(realParent, "EmbeddedServer");
+  const sentinel = path.join(embeddedServer, "keep.txt");
+
+  try {
+    fs.mkdirSync(embeddedServer, { recursive: true });
+    fs.writeFileSync(sentinel, "keep me");
+    fs.symlinkSync(realParent, linkedParent, "dir");
+
+    const result = spawnSync("bash", [bundleScript, "--clean"], {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        TOKENTRACKER_LINUX_EMBED_DIR: path.join(linkedParent, "EmbeddedServer"),
+      },
+      encoding: "utf8",
+      timeout: 30_000,
+      maxBuffer: 1024 * 1024,
+    });
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /path containing a symlink/);
+    assert.equal(fs.readFileSync(sentinel, "utf8"), "keep me");
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("Linux bundle rejects unsupported architecture overrides before downloading", () => {
+  const result = spawnSync("bash", [bundleScript, "--clean"], {
+    cwd: repoRoot,
+    env: {
+      ...process.env,
+      TARGET_ARCH: "../../unexpected",
+    },
+    encoding: "utf8",
+    timeout: 30_000,
+    maxBuffer: 1024 * 1024,
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /unsupported Linux architecture/);
+});
