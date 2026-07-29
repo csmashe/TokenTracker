@@ -6,7 +6,7 @@
 
 ### 모든 CLI에서 AI에 쓰는 비용을 정확히 파악
 
-**27개의 AI 코딩 도구**에서 토큰 수치를 자동으로 수집하고 로컬에서 집계해, 실제 비용 추세를 아름다운 대시보드에서 확인. 클라우드 계정 불필요, API Key 불필요, 셋업 불필요 — 명령 한 줄이면 끝.
+**29개의 AI 코딩 도구**에서 토큰 수치를 자동으로 수집하고 로컬에서 집계해, 실제 비용 추세를 아름다운 대시보드에서 확인. 클라우드 계정 불필요, API Key 불필요, 셋업 불필요 — 명령 한 줄이면 끝.
 
 [![npm version](https://img.shields.io/npm/v/tokentracker-cli.svg?color=blue)](https://www.npmjs.com/package/tokentracker-cli)
 [![npm downloads](https://img.shields.io/npm/dm/tokentracker-cli.svg?color=brightgreen)](https://www.npmjs.com/package/tokentracker-cli)
@@ -87,13 +87,14 @@ brew install mm7894215/tokentracker/tokentracker
 
 ## ✨ 기능
 
-- 🔌 **27개의 AI 도구 기본 지원** — Claude Code, Codex CLI, Cursor, Gemini CLI, Antigravity, Kiro, OpenCode, OpenClaw, Every Code, Hermes Agent, GitHub Copilot, Kimi Code, CodeBuddy, WorkBuddy, Grok Build, oh-my-pi, pi, Craft Agents, Kilo CLI, Kilo Code, Roo Code, Zed Agent, Goose, Droid, Mimo Code, ZCode, AnythingLLM Desktop
+- 🔌 **29개의 AI 도구 기본 지원** — Claude Code, Codex CLI, Cursor, Gemini CLI, Antigravity, Kiro, OpenCode, OpenClaw, Every Code, Hermes Agent, GitHub Copilot, Kimi Code, CodeBuddy, WorkBuddy, Grok Build, oh-my-pi, pi, Craft Agents, Kilo CLI, Kilo Code, Roo Code, Zed Agent, Goose, Droid, Mimo Code, ZCode, Qoder, AnythingLLM Desktop, Claude Science
 - 🏠 **100% 로컬** — 토큰 데이터가 기기를 떠나지 않습니다. 계정 없음, API Key 없음.
 - 🚀 **제로 설정** — 첫 실행 시 Hook 자동 설치. 0에서 대시보드까지 30초.
 - 📊 **아름다운 대시보드** — 사용 추세, 모델별 비용 분석, GitHub 스타일 활동 히트맵, 프로젝트 귀속 정보
 - 🖥️ **네이티브 데스크톱 앱** — macOS 메뉴바(위젯 포함)와 Windows 시스템 트레이. 각각 임베디드 서버와 네이티브 WebView 대시보드를 제공합니다
 - 🎨 **4종 데스크톱 위젯** — Pin Usage / Activity Heatmap / Top Models / Usage Limits를 데스크톱에 고정
-- 📈 **실시간 레이트 제한 추적** — Claude / Codex / Cursor / Gemini / Kiro / Copilot / Antigravity 쿼터 윈도우와 리셋 카운트다운
+- 📈 **실시간 사용 한도** — Claude / Codex / Cursor / Gemini / Kimi / Kiro / Grok / Copilot / Antigravity / ZCode / OpenCode Go / Qoder 한도를 표시하고 로컬 provider 앱이 잠시 종료되어도 last-good 캐시 유지
+- 🟢 **서비스 상태 페이지** — 8개 공식 provider 상태 페이지의 운영 및 장애 상태 표시
 - 💰 **비용 엔진** — [LiteLLM](https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json)을 통해 2,200+개 모델 가격 책정 (매일 자동 갱신) + 틈새 도구 (Kiro, Cursor Composer, Kimi, CodeBuddy hy3)를 위한 수동 큐레이션 오버라이드; 24시간 디스크 캐시 + 번들된 오프라인 스냅샷으로 인터넷 없이도 정확한 USD 표시. 벤더가 공식 가격을 공개하지 않은 모델 (예: Tencent hy3-preview)은 토큰만 추적되며 벤더가 요율을 공개할 때까지 비용은 $0으로 표시됩니다.
 - 🌐 **옵션 리더보드** — 전 세계 개발자들과 비교; 컬럼을 드래그하여 관심 있는 프로바이더에 집중 (옵트인, 참여하려면 사인인 필요)
 - 🔄 **기기 간 계정 뷰** — 클라우드 동기화를 켜면 작업하는 모든 기기(노트북 + 데스크톱 + 서버)의 사용량을 하나의 뷰로 통합 — 총량·트렌드·히트맵·모델 분석을 모두 기기 통합으로 집계 (옵트인, 사인인 필요; 기본 로컬 전용 경험은 즉시·오프라인 유지)
@@ -190,12 +191,14 @@ brew install mm7894215/tokentracker/tokentracker
 | **Droid** (Factory) | ✅ 자동 | 패시브 세션 리더 (`~/.factory/sessions/**/settings.json`, cumulative deltas) |
 | **Mimo Code** (mimocode) | ✅ 자동 | 패시브 SQLite 리더 (`~/.local/share/mimocode/mimocode.db`, OpenCode-fork schema; mimo 네이티브 턴만 집계 — 미러링된 Claude/claude-mem 기록은 제외) |
 | **ZCode** (Z.ai) | ✅ 자동 | 패시브 SQLite 리더 (`~/.zcode/cli/db/db.sqlite`, OpenCode-fork schema; Z.ai/BigModel GLM 턴만 집계 — 번들된 Claude/Codex/Gemini 서브에이전트는 제외) |
+| **Qoder** | ✅ 자동 | 패시브 SQLite 리더 (`Qoder/SharedClientCache/cache/db/local.db`; assistant `token_info`만 읽고 캐시 입력을 분리하며 prompt/response는 읽지 않음) 및 Qoder 로컬 세션의 Plan Credits / Ultimate 무료 호출 한도 |
 | **AnythingLLM Desktop** | ✅ 자동 | 패시브 SQLite 리더 (`anythingllm-desktop/storage/anythingllm.db`, 메시지별 token 지표만 읽음) |
+| **Claude Science** | ✅ 자동 | 패시브 SQLite 리더 (`~/.claude-science/operon-cli.db`, `frames` 테이블의 token 카운터만 읽으며 prompt·산출물·연구 내용은 읽지 않음). 네이티브 Windows 빌드가 없어 Windows에서는 WSL 안에서 실행되는 앱을 읽습니다. |
 
 > **플러그인이나 hook을 수동으로 설치해야 하나요?** 아니요. `tokentracker` (또는 `tokentracker init`)가 첫 실행에서 모든 것을 처리합니다:
 > - **Hook 기반** 도구 (Claude Code, Codex, Gemini, Every Code, **CodeBuddy**, **WorkBuddy**, **Grok Build**) — 도구 자체의 설정에 SessionEnd hook 또는 TOML notify 엔트리를 작성합니다.
 > - **플러그인 기반** 도구 (OpenCode, **OpenClaw**) — 플러그인은 npm 패키지 안에 포함되어 있습니다. OpenClaw 세션 플러그인은 `~/.tokentracker/tracker/openclaw-plugin/openclaw-session-sync/`에 있으며, OpenClaw 자체 CLI로 링크하고 활성화한 뒤 동기화를 트리거하는 세션 종료 이벤트를 허용하도록 `hooks.allowConversationAccess=true`를 설정합니다. 다운로드, 드래그 앤 드롭 불필요.
-> - **패시브 리더** (Cursor, Kiro, Hermes, Kimi Code, Copilot, **Grok Build**, **oh-my-pi**, **pi**, **Craft Agents**, **Kilo CLI**, **Kilo Code**, **Roo Code**, **Antigravity**, **Zed Agent**, **Goose**, **Droid**, **Mimo Code**, **ZCode**, **AnythingLLM Desktop**) — 이들 도구에는 아무것도 설치하지 않습니다. 도구가 이미 생성하는 파일 (SQLite DB, JSONL, OTEL export, session logs)만 읽습니다. Copilot App / CLI 사용량은 `~/.copilot/session-store.db`에서 요청별로 읽습니다. `data.db`는 레거시 마이그레이션 기준선으로 한 번만 사용하며 store가 정식 소스가 된 뒤에는 관찰 전용으로 유지됩니다. Chat 확장과 이전 CLI는 계속 OTEL을 사용하며, TokenTracker가 겹치는 요청을 한 번만 집계합니다. 마이그레이션 전 혼합 App/CLI 기록에서 모델을 안전하게 분리할 수 없는 잔여분은 추정 모델 대신 `github-copilot-legacy` 집계로 보존합니다.
+> - **패시브 리더** (Cursor, Kiro, Hermes, Kimi Code, Copilot, **Grok Build**, **oh-my-pi**, **pi**, **Craft Agents**, **Kilo CLI**, **Kilo Code**, **Roo Code**, **Antigravity**, **Zed Agent**, **Goose**, **Droid**, **Mimo Code**, **ZCode**, **AnythingLLM Desktop**, **Claude Science**) — 이들 도구에는 아무것도 설치하지 않습니다. 도구가 이미 생성하는 파일 (SQLite DB, JSONL, OTEL export, session logs)만 읽습니다. Copilot App / CLI 사용량은 `~/.copilot/session-store.db`에서 요청별로 읽습니다. `data.db`는 레거시 마이그레이션 기준선으로 한 번만 사용하며 store가 정식 소스가 된 뒤에는 관찰 전용으로 유지됩니다. Chat 확장과 이전 CLI는 계속 OTEL을 사용하며, TokenTracker가 겹치는 요청을 한 번만 집계합니다. 마이그레이션 전 혼합 App/CLI 기록에서 모델을 안전하게 분리할 수 없는 잔여분은 추정 모델 대신 `github-copilot-legacy` 집계로 보존합니다.
 > - **Grok Build 추정** — 현재 로컬 텔레메트리는 `updates.jsonl`의 누적 `totalTokens`를 노출하지만, 안정적인 프롬프트/출력/캐시 분할은 제공하지 않습니다; `signals.json`은 `contextTokensUsed` 스냅샷을 사용한 폴백으로 남아 있습니다. 호출별 사용 상세 정보가 제공될 때까지 TokenTracker는 Grok 비용을 추정합니다.
 >
 > 언제든 `tokentracker status`로 각 통합의 상태를 확인할 수 있습니다. `skipped`로 표시되면 `detail` 컬럼이 이유를 설명합니다 (예: 도구 CLI가 `PATH`에 없음, 설정 읽기 불가).
@@ -210,11 +213,11 @@ brew install mm7894215/tokentracker/tokentracker
 
 |                          | **TokenTracker** | ccusage     | Cursor stats |
 |--------------------------|:---:|:---:|:---:|
-| **지원 AI 도구**         | **27**           | 1 (Claude)  | 1 (Cursor)   |
+| **지원 AI 도구**         | **29**           | 1 (Claude)  | 1 (Cursor)   |
 | **로컬 우선, 계정 불필요** | ✅            | ✅           | ❌            |
 | **네이티브 데스크톱 앱** | ✅ macOS + Windows | ❌          | ❌            |
 | **데스크톱 위젯**        | ✅ 4종            | ❌           | ❌            |
-| **레이트 제한 추적**     | ✅ 7개 프로바이더 | ❌           | Cursor 전용  |
+| **레이트 제한 추적**     | ✅ 12개 프로바이더 | ❌           | Cursor 전용  |
 
 ---
 
@@ -222,7 +225,7 @@ brew install mm7894215/tokentracker/tokentracker
 
 ```mermaid
 flowchart LR
-    A["AI coding tools<br/>Claude Code · Codex · Cursor · Gemini · Kiro<br/>OpenCode · OpenClaw · Every Code · Hermes · Copilot<br/>Kimi · CodeBuddy · WorkBuddy · Grok · Kilo · Roo · Zed · Goose<br/>Antigravity · oh-my-pi · pi · Craft · Droid · Mimo · ZCode · AnythingLLM"]
+    A["AI coding tools<br/>Claude Code · Codex · Cursor · Gemini · Kiro<br/>OpenCode · OpenClaw · Every Code · Hermes · Copilot<br/>Kimi · CodeBuddy · WorkBuddy · Grok · Kilo · Roo · Zed · Goose<br/>Antigravity · oh-my-pi · pi · Craft · Droid · Mimo · ZCode · Qoder · AnythingLLM"]
     A -->|hooks trigger| B[Token Tracker]
     B -->|parse logs<br/>30-min UTC buckets| C[(Local SQLite)]
     C --> D[Web Dashboard]
@@ -240,6 +243,8 @@ flowchart LR
 ---
 
 ## 🛡️ 프라이버시
+
+> 📄 **[전체 개인정보 처리방침](docs/PRIVACY.md)**(영문) — 앱이 보낼 수 있는 모든 네트워크 요청, 각 요청이 전송하는 내용, 끄는 방법을 모두 정리했습니다.
 
 | 보호 | 설명 |
 |---|---|
@@ -397,7 +402,7 @@ TokenTrackerBar는 **애드혹 서명**되어 있습니다 (Apple Developer ID�
 이것은 macOS가 다운로드된 모든 파일에 붙이는 `com.apple.quarantine` 속성에 Gatekeeper가 반응하는 것일 뿐 — 실제 문제는 아닙니다. 다음으로 한 번 클리어:
 
 ```bash
-xattr -cr /Applications/TokenTrackerBar.app
+xattr -cr /Applications/TokenTracker.app
 ```
 
 이후 앱이 정상적으로 열립니다.

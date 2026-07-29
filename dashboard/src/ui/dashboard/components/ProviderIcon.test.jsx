@@ -15,6 +15,14 @@ describe("ProviderIcon", () => {
     expect(icon).toHaveClass("brightness-0", "dark:brightness-100", "shrink-0");
   });
 
+  it("renders Qoder from the Lobe Icons brand asset", () => {
+    const { container } = render(<ProviderIcon provider="qoder" size={20} />);
+    const icon = container.querySelector('img[src="/brand-logos/qoder.svg"]');
+
+    expect(icon).not.toBeNull();
+    expect(icon).toHaveClass("dark:invert");
+  });
+
   it("keeps the theme-aware placeholder for unknown providers", () => {
     const { container } = render(<ProviderIcon provider="unknown-provider" />);
     const placeholder = container.querySelector("svg");

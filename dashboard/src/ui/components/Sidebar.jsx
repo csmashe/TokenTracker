@@ -10,6 +10,7 @@ import {
   PawPrint,
   Globe,
   Puzzle,
+  Activity,
   Settings as SettingsIcon,
   ChevronLeft,
   ChevronRight,
@@ -52,6 +53,7 @@ export function getNavGroups() {
         { id: "pet", to: "/pet-settings", icon: PawPrint, label: copy("nav.pet") },
         { id: "skills", to: "/skills", icon: Puzzle, label: copy("nav.skills") },
         { id: "ip-check", to: "/ip-check", icon: Globe, label: copy("nav.ip_check") },
+        { id: "service-status", to: "/service-status", icon: Activity, label: copy("nav.service_status") },
       ],
     },
     {

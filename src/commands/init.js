@@ -124,7 +124,9 @@ const SUPPORTED_PROVIDERS = [
   "Droid",
   "Mimo",
   "ZCode",
+  "Qoder",
   "AnythingLLM Desktop",
+  "Claude Science",
 ];
 
 async function cmdInit(argv) {
@@ -340,6 +342,9 @@ async function runSetup({
   const config = {
     ...existingPlainConfig,
     installedAt,
+    // Keep a persisted legacy URL until the first sync. sync owns the migration
+    // lock and must reset the upload offset/backoff before removing this marker;
+    // rewriting it here would skip the historical replay permanently.
     baseUrl: opts.baseUrl || existingPlainConfig.baseUrl || DEFAULT_BASE_URL,
   };
   if (opts.dashboardUrl) {

@@ -45,13 +45,21 @@ function ensureNamespacedCursors(cursors, providerName, activeKeys = ["native", 
   return cursors[providerName];
 }
 
-function ensureFlatCursor(cursors, providerName, env) {
+// Collapse { native, wsl } namespaces back into a flat cursor when only one
+// install remains. `preferredKey` names the SURVIVING install's namespace —
+// its keys must win the merge, otherwise the vanished install's cursor
+// (lastDbId watermarks, dedup maps) is donated to the survivor and its next
+// parse double-counts everything past the foreign cursor. Callers that don't
+// know the survivor fall back to the mode preference (legacy behavior).
+function ensureFlatCursor(cursors, providerName, env, preferredKey) {
   const state = cursors[providerName];
   if (!state || typeof state !== "object") return;
   if (state.native === undefined && state.wsl === undefined) return;
 
   const mode = wsl.getWslMode(env || process.env);
-  const preferWsl = mode === "wsl-first" || mode === "wsl-only";
+  const preferWsl = preferredKey === "wsl" || preferredKey === "native"
+    ? preferredKey === "wsl"
+    : mode === "wsl-first" || mode === "wsl-only";
   const merged = preferWsl ? { ...state.native, ...state.wsl } : { ...state.wsl, ...state.native };
   cursors[providerName] = merged;
 }

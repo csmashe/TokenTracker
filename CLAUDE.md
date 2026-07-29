@@ -18,7 +18,7 @@ For the canonical list of supported providers, grep `parse*Incremental` in `src/
 ## Frequently used commands
 
 ```bash
-npm test                                  # node --test test/*.test.js  (97 files)
+npm test                                  # node --test test/*.test.js  (209 files)
 node --test test/<name>.test.js           # single test file
 npm run ci:local                          # tests + validations + builds
 npm run dashboard:dev                     # Vite dev server with local API mock (port 5173)
@@ -119,7 +119,7 @@ Release notes: one English line, no markdown sections (`Fix token stats inflatio
 cd TokenTrackerBar && npm run dashboard:build && ./scripts/bundle-node.sh
 xcodegen generate && ruby scripts/patch-pbxproj-icon.rb
 xcodebuild -scheme TokenTrackerBar -configuration Release clean build
-APP="$(find ~/Library/Developer/Xcode/DerivedData/TokenTrackerBar-*/Build/Products/Release -name 'TokenTrackerBar.app' -maxdepth 1)"
+APP="$(find ~/Library/Developer/Xcode/DerivedData/TokenTrackerBar-*/Build/Products/Release -name 'TokenTracker.app' -maxdepth 1)"
 bash scripts/create-dmg.sh "$APP"
 ```
 
