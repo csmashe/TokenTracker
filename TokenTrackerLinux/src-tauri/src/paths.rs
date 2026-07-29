@@ -25,6 +25,18 @@ pub fn development_runtime_paths(project_dir: &Path) -> RuntimePaths {
     }
 }
 
+pub fn prefix_runtime_paths_from_executable(executable: &Path) -> Option<RuntimePaths> {
+    let bin_dir = executable.parent()?;
+    let prefix = bin_dir.parent()?;
+    Some(installed_runtime_paths(
+        &prefix.join("lib").join("tokentracker-linux"),
+    ))
+}
+
+fn runtime_paths_exist(paths: &RuntimePaths) -> bool {
+    paths.node.exists() && paths.tracker.exists()
+}
+
 pub fn resolve_runtime_paths() -> Result<RuntimePaths, String> {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let project_dir = manifest_dir
@@ -33,15 +45,25 @@ pub fn resolve_runtime_paths() -> Result<RuntimePaths, String> {
     let development = development_runtime_paths(project_dir);
     let installed = installed_runtime_paths(Path::new("/usr/lib/tokentracker-linux"));
 
-    let running_from_repo = env::current_exe()
-        .ok()
+    let executable = env::current_exe().ok();
+    let running_from_repo = executable
+        .as_ref()
         .is_some_and(|exe| exe.starts_with(project_dir));
 
-    if running_from_repo && development.node.exists() && development.tracker.exists() {
+    if running_from_repo && runtime_paths_exist(&development) {
         return Ok(development);
     }
 
-    if installed.node.exists() && installed.tracker.exists() {
+    if let Some(prefix_paths) = executable
+        .as_deref()
+        .and_then(prefix_runtime_paths_from_executable)
+    {
+        if runtime_paths_exist(&prefix_paths) {
+            return Ok(prefix_paths);
+        }
+    }
+
+    if runtime_paths_exist(&installed) {
         return Ok(installed);
     }
 
@@ -79,6 +101,24 @@ mod tests {
         assert_eq!(
             paths.tracker,
             PathBuf::from("/repo/TokenTrackerLinux/EmbeddedServer/tokentracker/bin/tracker.js")
+        );
+    }
+
+    #[test]
+    fn local_install_runtime_paths_follow_the_executable_prefix() {
+        let paths = prefix_runtime_paths_from_executable(Path::new(
+            "/home/user/.local/bin/tokentracker-linux",
+        ))
+        .expect("local executable should have a prefix");
+
+        assert_eq!(
+            paths,
+            RuntimePaths {
+                node: PathBuf::from("/home/user/.local/lib/tokentracker-linux/node"),
+                tracker: PathBuf::from(
+                    "/home/user/.local/lib/tokentracker-linux/tokentracker/bin/tracker.js"
+                ),
+            }
         );
     }
 }

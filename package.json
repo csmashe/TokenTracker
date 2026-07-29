@@ -28,6 +28,8 @@
     "linux:bundle": "npm run dashboard:build && npm --prefix TokenTrackerLinux run bundle:node",
     "linux:build": "npm run linux:bundle && npm --prefix TokenTrackerLinux run build",
     "linux:package:local": "npm --prefix TokenTrackerLinux run package:local",
+    "linux:install:local": "npm run linux:build && npm --prefix TokenTrackerLinux run install:local",
+    "linux:uninstall:local": "npm --prefix TokenTrackerLinux run uninstall:local",
     "dashboard:dev": "npm --prefix dashboard run dev",
     "dashboard:open": "bash scripts/open-dashboard.sh",
     "dashboard:preview": "npm --prefix dashboard run preview",

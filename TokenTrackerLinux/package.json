@@ -9,6 +9,8 @@
     "build": "tauri build",
     "bundle:node": "bash scripts/bundle-node-linux.sh",
     "package:local": "bash scripts/build-local-package.sh",
+    "install:local": "bash scripts/install-local.sh",
+    "uninstall:local": "bash scripts/install-local.sh --uninstall",
     "sync:tauri-icon": "node scripts/sync-tauri-icon.mjs",
     "test:icons": "node --test test/sync-tauri-icon.test.mjs",
     "prebuild": "node scripts/sync-tauri-icon.mjs"
