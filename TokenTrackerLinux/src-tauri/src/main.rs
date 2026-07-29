@@ -9,6 +9,17 @@ use server::TokenTrackerServer;
 use tauri::{Manager, WindowEvent};
 
 static SERVER: Lazy<Mutex<Option<TokenTrackerServer>>> = Lazy::new(|| Mutex::new(None));
+const WEBKIT_DMABUF_ENV: &str = "WEBKIT_DISABLE_DMABUF_RENDERER";
+
+/// WebKitGTK's DMA-BUF renderer can produce an empty window or abort the
+/// Wayland connection on otherwise supported Linux/NVIDIA configurations.
+/// Keep an explicit user value authoritative, but default to the compatible
+/// renderer before GTK/WebKit is initialized.
+fn configure_webkit_runtime() {
+    if std::env::var_os(WEBKIT_DMABUF_ENV).is_none() {
+        std::env::set_var(WEBKIT_DMABUF_ENV, "1");
+    }
+}
 
 fn stop_server() {
     if let Ok(mut guard) = SERVER.lock() {
@@ -99,6 +110,8 @@ fn start_health_monitor() {
 }
 
 fn main() {
+    configure_webkit_runtime();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             tray::show_main_window(app);
