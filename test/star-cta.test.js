@@ -68,6 +68,7 @@ test("star CTA stays silent for automation, native shells, and opt-out", async (
   assert.equal(isInteractiveCli({ stdout: pipe, env: {} }), false);
   assert.equal(isInteractiveCli({ stdout: tty, env: { CI: "true" } }), false);
   assert.equal(isInteractiveCli({ stdout: tty, env: { NODE_TEST_CONTEXT: "child-v8" } }), false);
+  assert.equal(isInteractiveCli({ stdout: tty, env: { TOKENTRACKER_APP_SHELL: "linux" } }), false);
   assert.equal(isInteractiveCli({ stdout: tty, env: { TOKENTRACKER_APP_SHELL: "macos" } }), false);
   assert.equal(isInteractiveCli({ stdout: tty, env: { TOKENTRACKER_APP_SHELL: "windows" } }), false);
   assert.equal(isInteractiveCli({ stdout: tty, env: { TOKENTRACKER_NO_STAR_PROMPT: "1" } }), false);

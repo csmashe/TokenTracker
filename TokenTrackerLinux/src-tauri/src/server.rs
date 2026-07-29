@@ -10,6 +10,8 @@ use std::time::{Duration, Instant};
 use crate::paths::RuntimePaths;
 
 const READINESS_PATH: &str = "/functions/tokentracker-user-status";
+const APP_SHELL_ENV: (&str, &str) = ("TOKENTRACKER_APP_SHELL", "linux");
+const EMBEDDED_SAFE_ENV: (&str, &str) = ("TOKENTRACKER_EMBEDDED_SAFE", "1");
 
 /// How often the health monitor probes the server.
 pub const HEALTH_CHECK_INTERVAL: Duration = Duration::from_secs(15);
@@ -37,9 +39,7 @@ impl TokenTrackerServer {
         let url = dashboard_url(port);
 
         let log_file = open_server_log();
-        let args = serve_args(&paths.tracker, port);
-        let mut child = Command::new(&paths.node)
-            .args(&args)
+        let mut child = server_command(&paths, port)
             .stdout(Stdio::null())
             .stderr(Stdio::from(log_file))
             .spawn()
@@ -100,9 +100,7 @@ impl TokenTrackerServer {
         let mut log_file = open_server_log();
         let _ = writeln!(log_file, "\n--- server restart ---");
 
-        let args = serve_args(&self.paths.tracker, self.port);
-        self.child = Command::new(&self.paths.node)
-            .args(&args)
+        self.child = server_command(&self.paths, self.port)
             .stdout(Stdio::null())
             .stderr(Stdio::from(log_file))
             .spawn()
@@ -201,6 +199,15 @@ pub fn serve_args(tracker: &Path, port: u16) -> Vec<OsString> {
     ]
 }
 
+fn server_command(paths: &RuntimePaths, port: u16) -> Command {
+    let mut command = Command::new(&paths.node);
+    command
+        .args(serve_args(&paths.tracker, port))
+        .env(APP_SHELL_ENV.0, APP_SHELL_ENV.1)
+        .env(EMBEDDED_SAFE_ENV.0, EMBEDDED_SAFE_ENV.1);
+    command
+}
+
 pub fn wait_for_server_ready(port: u16, timeout: Duration) -> Result<(), String> {
     let start = Instant::now();
     while start.elapsed() < timeout {
@@ -255,6 +262,7 @@ fn probe_server_http(port: u16) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::OsStr;
 
     #[test]
     fn dashboard_url_uses_loopback_http() {
@@ -275,6 +283,27 @@ mod tests {
                 OsString::from("--no-sync"),
             ],
         );
+    }
+
+    #[test]
+    fn server_command_enables_linux_embedded_safe_mode() {
+        let paths = RuntimePaths {
+            node: PathBuf::from("/opt/tokentracker/node"),
+            tracker: PathBuf::from("/opt/tokentracker/bin/tracker.js"),
+        };
+        let command = server_command(&paths, 34567);
+
+        let app_shell = command
+            .get_envs()
+            .find(|(key, _)| *key == OsStr::new(APP_SHELL_ENV.0))
+            .and_then(|(_, value)| value);
+        let embedded_safe = command
+            .get_envs()
+            .find(|(key, _)| *key == OsStr::new(EMBEDDED_SAFE_ENV.0))
+            .and_then(|(_, value)| value);
+
+        assert_eq!(app_shell, Some(OsStr::new(APP_SHELL_ENV.1)));
+        assert_eq!(embedded_safe, Some(OsStr::new(EMBEDDED_SAFE_ENV.1)));
     }
 
     #[test]

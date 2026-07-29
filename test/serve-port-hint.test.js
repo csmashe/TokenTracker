@@ -10,6 +10,7 @@ const {
   parseArgs,
   isRunningUnderWsl,
   resolveDefaultPort,
+  isTokenTrackerServeCommand,
 } = require("../src/commands/serve");
 
 function mockPlatform(t, platform) {
@@ -22,7 +23,46 @@ test("serve port collision hint references the published npm package name", () =
   assert.equal(NPM_PACKAGE_NAME, "tokentracker-cli");
   assert.equal(
     buildPortInUseHint(7681),
-    "Port 7681 is still in use after cleanup. Try: npx tokentracker-cli serve --port 7682\n",
+    "Port 7681 is still in use after safe cleanup. Try: npx tokentracker-cli serve --port 7682\n",
+  );
+  assert.equal(
+    buildPortInUseHint(7681, { cleanupAttempted: false }),
+    "Port 7681 is in use. Try: npx tokentracker-cli serve --port 7682\n",
+  );
+});
+
+test("serve only identifies verified TokenTracker Node servers for cleanup", () => {
+  assert.equal(
+    isTokenTrackerServeCommand(
+      "/usr/bin/node /home/user/.tokentracker/tracker/app/bin/tracker.js serve --port 7680",
+    ),
+    true,
+  );
+  assert.equal(
+    isTokenTrackerServeCommand(
+      "/usr/lib/tokentracker-linux/node \"/usr/lib/tokentracker-linux/tokentracker/bin/tracker.js\" serve --port 17680",
+    ),
+    true,
+  );
+  // npm bin shims: `ps` reports the symlink path, not the resolved script.
+  assert.equal(
+    isTokenTrackerServeCommand("node /home/user/proj/node_modules/.bin/tokentracker-cli serve"),
+    true,
+  );
+  assert.equal(isTokenTrackerServeCommand("/usr/bin/node /usr/local/bin/tokentracker serve"), true);
+  // `ps` reports argv joined with spaces and no quoting.
+  assert.equal(
+    isTokenTrackerServeCommand("/usr/bin/node /home/user/Token Tracker/bin/tracker.js serve"),
+    true,
+  );
+  assert.equal(isTokenTrackerServeCommand("/usr/bin/python3 -m http.server 7680"), false);
+  assert.equal(
+    isTokenTrackerServeCommand("/usr/bin/node /tmp/unrelated.js --label tracker.js serve"),
+    false,
+  );
+  assert.equal(
+    isTokenTrackerServeCommand("/usr/bin/node /srv/unrelated/tracker.js serve --port 7680"),
+    false,
   );
 });
 
@@ -92,13 +132,18 @@ test("serve respects explicit port from --port and PORT env", (t) => {
     wslDefaultPort: false,
     open: true,
     sync: true,
+    embeddedSafe: false,
   });
-  assert.deepEqual(parseArgs(["--port", "7701", "--no-open", "--no-sync"], { PORT: "7700" }), {
+  assert.deepEqual(parseArgs(["--port", "7701", "--no-open", "--no-sync"], {
+    PORT: "7700",
+    TOKENTRACKER_EMBEDDED_SAFE: "1",
+  }), {
     port: 7701,
     portExplicit: true,
     wslDefaultPort: false,
     open: false,
     sync: false,
+    embeddedSafe: true,
   });
   assert.deepEqual(parseArgs([], {}), {
     port: 7680,
@@ -106,6 +151,7 @@ test("serve respects explicit port from --port and PORT env", (t) => {
     wslDefaultPort: false,
     open: true,
     sync: true,
+    embeddedSafe: false,
   });
 });
 

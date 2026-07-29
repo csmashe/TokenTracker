@@ -44,8 +44,9 @@ const STATIC_ASSET_EXTENSIONS = new Set([
   ".xml",
 ]);
 
-function buildPortInUseHint(port) {
-  return `Port ${port} is still in use after cleanup. Try: npx ${NPM_PACKAGE_NAME} serve --port ${port + 1}\n`;
+function buildPortInUseHint(port, { cleanupAttempted = true } = {}) {
+  const status = cleanupAttempted ? "is still in use after safe cleanup" : "is in use";
+  return `Port ${port} ${status}. Try: npx ${NPM_PACKAGE_NAME} serve --port ${port + 1}\n`;
 }
 
 function isPortUnavailableError(error) {
@@ -62,26 +63,37 @@ async function cmdServe(argv) {
   // 0. First-time setup: if tracker dir doesn't exist, run init first
   const { trackerDir, binDir } = await resolveTrackerPaths();
   if (!fssync.existsSync(path.join(trackerDir, "cursors.json"))) {
-    process.stdout.write("First time? Setting up Token Tracker...\n\n");
-    try {
-      const { cmdInit } = require("./init");
-      await cmdInit(["--yes"]);
-    } catch (e) {
-      process.stdout.write(`Init warning: ${e?.message || e}\n`);
+    if (opts.embeddedSafe) {
+      // stderr, not stdout: desktop shells discard the server's stdout, and
+      // this is the only notice that tracking is inactive.
+      process.stderr.write(
+        "TokenTracker is not initialized; embedded safe mode will not change CLI integrations. "
+          + "Run `npx tokentracker-cli init` separately to enable tracking.\n",
+      );
+    } else {
+      process.stdout.write("First time? Setting up Token Tracker...\n\n");
+      try {
+        const { cmdInit } = require("./init");
+        await cmdInit(["--yes"]);
+      } catch (e) {
+        process.stdout.write(`Init warning: ${e?.message || e}\n`);
+      }
     }
   }
 
-  try {
-    const { installLocalTrackerApp, repairRuntimeIntegrations } = require("./init");
-    await installLocalTrackerApp({ appDir: path.join(trackerDir, "app") });
-    const repairResult = await repairRuntimeIntegrations({ trackerDir, binDir, safeMode: true });
-    for (const warning of repairResult?.warnings || []) {
-      process.stdout.write(
-        `Runtime integration repair warning (${warning.integration}): ${warning.error}\n`,
-      );
+  if (!opts.embeddedSafe) {
+    try {
+      const { installLocalTrackerApp, repairRuntimeIntegrations } = require("./init");
+      await installLocalTrackerApp({ appDir: path.join(trackerDir, "app") });
+      const repairResult = await repairRuntimeIntegrations({ trackerDir, binDir, safeMode: true });
+      for (const warning of repairResult?.warnings || []) {
+        process.stdout.write(
+          `Runtime integration repair warning (${warning.integration}): ${warning.error}\n`,
+        );
+      }
+    } catch (e) {
+      process.stdout.write(`Runtime refresh warning: ${e?.message || e}\n`);
     }
-  } catch (e) {
-    process.stdout.write(`Runtime refresh warning: ${e?.message || e}\n`);
   }
 
   // 1. Optional sync
@@ -183,14 +195,16 @@ async function cmdServe(argv) {
   try {
     port = await listenOnAvailablePort(server, opts.port, {
       allowFallback: !opts.portExplicit,
-      ensurePortFreeFn: opts.portExplicit ? ensurePortFree : null,
+      ensurePortFreeFn: opts.portExplicit && !opts.embeddedSafe ? ensurePortFree : null,
       onRetry: (failedPort) => {
         process.stdout.write(`Port ${failedPort} unavailable, trying ${failedPort + 1}...\n`);
       },
     });
   } catch (e) {
     if (isPortUnavailableError(e)) {
-      process.stderr.write(buildPortInUseHint(opts.port));
+      process.stderr.write(
+        buildPortInUseHint(opts.port, { cleanupAttempted: !opts.embeddedSafe }),
+      );
     } else {
       process.stderr.write(`Server error: ${e.message}\n`);
     }
@@ -336,13 +350,52 @@ function findPidOnPort(port) {
   }
 }
 
+function readProcessCommand(pid) {
+  try {
+    return cp.execFileSync("ps", ["-p", String(pid), "-o", "command="], {
+      encoding: "utf8",
+      timeout: 5000,
+    }).trim();
+  } catch (_e) {
+    return "";
+  }
+}
+
+// A TokenTracker server is always `node <somewhere>/bin/<entry> serve`: either
+// the real script (npm global, embedded desktop runtime, repo checkout) or one
+// of the published npm bin symlinks, which `ps` reports by the shim path rather
+// than the resolved script. Requiring the `bin/` component keeps an unrelated
+// `node /srv/other/tracker.js serve` from looking like ours.
+const TRACKER_ENTRY_RE = new RegExp(
+  String.raw`(?:^|[\\/])\.?bin[\\/](?:tracker\.js|tokentracker-cli|tokentracker-tracker|tokentracker|tracker)$`,
+  "i",
+);
+// `ps -o command=` joins argv with spaces and drops all quoting, so the script
+// path is only unambiguous relative to the `serve` argument that follows it —
+// splitting on whitespace would reject an install under `~/Token Tracker/`.
+const NODE_SERVE_COMMAND_RE = /^(\S+)\s+(.+?)\s+serve(?:\s|$)/i;
+const NODE_EXECUTABLE_RE = /(?:^|[\\/])node(?:\.exe)?$/i;
+
+function isTokenTrackerServeCommand(command) {
+  const value = String(command || "").replaceAll("\0", " ").trim();
+  if (!value) return false;
+  const match = NODE_SERVE_COMMAND_RE.exec(value);
+  if (!match || !NODE_EXECUTABLE_RE.test(match[1])) return false;
+  const script = match[2].replace(/^["']/, "").replace(/["']$/, "");
+  return TRACKER_ENTRY_RE.test(script);
+}
+
 async function ensurePortFree(port) {
   const pids = findPidOnPort(port);
   if (pids.length === 0) return;
 
-  // Don't kill ourselves
+  // Only stop a verified TokenTracker server. A caller-supplied port may be
+  // owned by an unrelated application, and binding failure is safer than
+  // terminating a process merely because it happens to use that port.
   const self = process.pid;
-  const targets = pids.filter((p) => p !== self);
+  const targets = pids.filter(
+    (pid) => pid !== self && isTokenTrackerServeCommand(readProcessCommand(pid)),
+  );
   if (targets.length === 0) return;
 
   process.stdout.write(`Stopping previous server on port ${port} (pid ${targets.join(", ")})...\n`);
@@ -360,6 +413,7 @@ async function ensurePortFree(port) {
 
   // Force kill if still alive
   for (const pid of targets) {
+    if (!isTokenTrackerServeCommand(readProcessCommand(pid))) continue;
     try {
       process.kill(pid, "SIGKILL");
     } catch (_e) {}
@@ -502,6 +556,7 @@ function parseArgs(argv, env = process.env) {
     wslDefaultPort: !envPort && defaultPort === WSL_DEFAULT_PORT,
     open: true,
     sync: true,
+    embeddedSafe: isTruthyFlag(env.TOKENTRACKER_EMBEDDED_SAFE),
   };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -521,6 +576,12 @@ function parseArgs(argv, env = process.env) {
   return opts;
 }
 
+function isTruthyFlag(value) {
+  if (typeof value !== "string") return false;
+  const normalized = value.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes";
+}
+
 module.exports = {
   cmdServe,
   buildPortInUseHint,
@@ -532,6 +593,7 @@ module.exports = {
   parseArgs,
   isRunningUnderWsl,
   resolveDefaultPort,
+  isTokenTrackerServeCommand,
   shouldServeSpaFallback,
   startNativeBackgroundSync,
   NATIVE_BACKGROUND_SYNC_INTERVAL_MS,
