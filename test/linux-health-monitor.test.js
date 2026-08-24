@@ -136,6 +136,11 @@ test('Linux configures the WebKitGTK DMA-BUF fallback before Tauri starts', () =
   // can still opt back into the accelerated renderer.
   assert.match(main, /var_os\(WEBKIT_DMABUF_ENV\)\.is_none\(\)/);
   assert.match(main, /const WEBKIT_DMABUF_ENV: &str = "WEBKIT_DISABLE_DMABUF_RENDERER";/);
+
+  // The assigned value matters: WebKitGTK reads the variable as "set and not
+  // 0", so defaulting it to "0" would silently re-enable the DMA-BUF renderer
+  // this guards against while every other assertion here still passed.
+  assert.match(main, /set_var\(WEBKIT_DMABUF_ENV, "1"\)/);
 });
 
 test('GitHub CI validates synchronized platform versions', () => {
