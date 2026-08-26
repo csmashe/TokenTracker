@@ -182,6 +182,20 @@ fn record_still_matches(record: &ServerRecord) -> bool {
         && process_start_time(record.pid) == Some(record.start_time)
 }
 
+/// Whether `pid` leads its own process group, so `kill(-pid, ..)` targets
+/// exactly that group and nothing else.
+///
+/// Rejects pid <= 1 before anything else: `kill(-1, sig)` is POSIX's broadcast
+/// to *every* process the caller may signal, so a record naming pid 1 would
+/// tear down the whole login session instead of one server.
+pub fn leads_own_process_group(pid: i32) -> bool {
+    if pid <= 1 {
+        return false;
+    }
+    // SAFETY: getpgid(2) on a plain pid; returns -1 when the pid is gone.
+    unsafe { libc::getpgid(pid) == pid }
+}
+
 fn owner_still_running(record: &ServerRecord) -> bool {
     process_start_time(record.owner_pid) == Some(record.owner_start_time)
 }
@@ -298,15 +312,20 @@ pub fn reap_orphaned_servers() -> Vec<i32> {
                 continue;
             }
             let _ = std::fs::remove_file(&path);
-            if record.pid <= 0 || record.pid == std::process::id() as i32 {
+            if record.pid <= 1 || record.pid == std::process::id() as i32 {
                 continue;
             }
             if !record_still_matches(&record) {
                 continue;
             }
+            // Only a group leader may be negated; anything else would signal a
+            // group this process never created.
+            if !leads_own_process_group(record.pid) {
+                continue;
+            }
 
             // SAFETY: kill(2) on the negated pid signals the process group the
-            // server leads, which is the pid confirmed above.
+            // server leads, confirmed directly above.
             unsafe {
                 libc::kill(-record.pid, libc::SIGTERM);
             }
@@ -337,9 +356,10 @@ fn wait_for_exit(record: &ServerRecord, timeout: Duration, escalate_after: Durat
         if !record_still_matches(record) || Instant::now() >= deadline {
             return;
         }
-        if !escalated && Instant::now() >= escalate_at {
-            // SAFETY: identity revalidated by the check above on this same
-            // iteration, so this cannot land on a recycled PID.
+        if !escalated && Instant::now() >= escalate_at && leads_own_process_group(record.pid) {
+            // SAFETY: identity and group leadership revalidated on this same
+            // iteration, so this cannot land on a recycled PID or a foreign
+            // group.
             unsafe {
                 libc::kill(-record.pid, libc::SIGKILL);
             }
@@ -621,6 +641,9 @@ fn run_background_sync(paths: &RuntimePaths, child_slot: &Mutex<Option<Child>>) 
     let args = sync_args(&paths.tracker);
     match Command::new(&paths.node)
         .args(args)
+        // Own group, like the server spawns: `stop_child` signals by group, and
+        // a plain pid there would name a group this process never created.
+        .process_group(0)
         .stdout(Stdio::null())
         .stderr(server_log_stdio())
         .spawn()
@@ -638,21 +661,36 @@ fn stop_child(child: Option<&mut Child>) {
         Ok(Some(_)) => {}
         Ok(None) | Err(_) => {
             // Same grandchild problem as the reaper: killing only the leader
-            // leaves a proxy-relaunched server holding the port.
+            // leaves a proxy-relaunched server holding the port. Every child
+            // spawned here uses `process_group(0)`, but check rather than
+            // assume -- negating a pid that leads no group would signal one
+            // this process never created.
             let pgid = child.id() as i32;
-            // SAFETY: kill(2) on the group this child leads.
-            unsafe {
-                libc::kill(-pgid, libc::SIGTERM);
+            let group = leads_own_process_group(pgid);
+            if group {
+                // SAFETY: kill(2) on the group this child leads.
+                unsafe {
+                    libc::kill(-pgid, libc::SIGTERM);
+                }
             }
+
+            let mut exited = false;
             for _ in 0..20 {
                 if matches!(child.try_wait(), Ok(Some(_))) {
+                    exited = true;
                     break;
                 }
                 thread::sleep(Duration::from_millis(50));
             }
-            // SAFETY: as above; harmless once the group is already gone.
-            unsafe {
-                libc::kill(-pgid, libc::SIGKILL);
+
+            // Escalate only while the leader is still unreaped. Once `try_wait`
+            // reaps it the pid is free to be recycled, and `-pgid` could then
+            // name a stranger's group.
+            if !exited && group && leads_own_process_group(pgid) {
+                // SAFETY: leadership revalidated immediately above.
+                unsafe {
+                    libc::kill(-pgid, libc::SIGKILL);
+                }
             }
             let _ = child.kill();
             let _ = child.wait();

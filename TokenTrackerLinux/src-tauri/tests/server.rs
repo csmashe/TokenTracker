@@ -10,8 +10,9 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
 
 use tokentracker_linux::server::{
-    boot_id, dashboard_url, pick_available_port, process_start_time, rotate_log_if_oversized,
-    serve_args, server_log_paths, server_record_dirs, server_record_name, sync_args, MAX_LOG_BYTES,
+    boot_id, dashboard_url, leads_own_process_group, pick_available_port, process_start_time,
+    rotate_log_if_oversized, serve_args, server_log_paths, server_record_dirs, server_record_name,
+    sync_args, MAX_LOG_BYTES,
 };
 
 static COUNTER: AtomicU32 = AtomicU32::new(0);
@@ -258,7 +259,10 @@ const _: () = {
 
 #[test]
 fn records_never_land_in_a_world_writable_directory() {
-    let dirs = server_record_dirs(Some(PathBuf::from("/state")), Some(PathBuf::from("/home/u")));
+    let dirs = server_record_dirs(
+        Some(PathBuf::from("/state")),
+        Some(PathBuf::from("/home/u")),
+    );
 
     assert_eq!(dirs[0], PathBuf::from("/state/tokentracker/servers"));
     assert_eq!(
@@ -312,4 +316,24 @@ fn a_record_is_bound_to_the_current_boot() {
     // on reboot, which is what invalidates a stale one whose PID and
     // since-boot start tick could otherwise be matched by an unrelated process.
     assert_eq!(boot_id(), Some(id));
+}
+
+#[test]
+fn only_real_group_leaders_can_be_signalled_by_group() {
+    // kill(-1, sig) is POSIX's broadcast to every process the caller may
+    // signal, so a record naming pid 1 must never reach the negated-pid path:
+    // it would tear down the whole login session instead of one server.
+    assert!(!leads_own_process_group(1));
+    assert!(!leads_own_process_group(0));
+    assert!(!leads_own_process_group(-1));
+
+    // A pid that cannot exist leads no group either.
+    assert!(!leads_own_process_group(i32::MAX));
+
+    // The test binary is not a group leader (the shell that spawned it is), so
+    // negating its pid would signal a group it does not own.
+    let own = std::process::id() as i32;
+    // SAFETY: getpgid(2) on our own pid.
+    let pgid = unsafe { libc::getpgid(own) };
+    assert_eq!(leads_own_process_group(own), pgid == own);
 }
