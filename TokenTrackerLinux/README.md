@@ -10,9 +10,10 @@ Two distribution paths are supported:
 - **AppImage** — the released artifact, built by CI. Self-contained (it carries
   its own Node runtime and the built dashboard) and runs on any reasonably
   current glibc distro without a package manager.
+- **AppImage, `.deb` and `.rpm`** — published on every release.
 - **Arch package** — a `PKGBUILD` for building from a local checkout.
 
-## Install (AppImage)
+## Install
 
 Download `TokenTracker-linux-x86_64.AppImage` from the
 [latest release](https://github.com/xiufengsun/TokenTracker/releases/latest),
@@ -31,6 +32,26 @@ run without FUSE at all:
 ./TokenTracker-linux-x86_64.AppImage --appimage-extract
 ./squashfs-root/AppRun
 ```
+
+### Debian / Ubuntu (apt)
+
+```bash
+sudo apt install ./TokenTracker-linux-x86_64.deb
+```
+
+Needs `libappindicator3-1`, which lives in Ubuntu's **universe** component and
+is absent from Debian 12; use the AppImage there, which carries its own copy.
+
+### Fedora / RHEL (dnf)
+
+```bash
+sudo dnf install ./TokenTracker-linux-x86_64.rpm
+```
+
+The `.deb` and `.rpm` link against the system GTK/WebKit rather than bundling
+them, so they are roughly half the AppImage's size but depend on the distro
+shipping a compatible `webkit2gtk-4.1`. All three carry the same embedded Node
+runtime and dashboard.
 
 ## Build the Arch package
 
