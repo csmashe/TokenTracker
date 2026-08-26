@@ -2,6 +2,8 @@ use std::ffi::OsString;
 use std::fs::OpenOptions;
 use std::io::{Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt};
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -12,6 +14,11 @@ use std::time::{Duration, Instant};
 use crate::paths::RuntimePaths;
 
 const READINESS_PATH: &str = "/functions/tokentracker-user-status";
+
+/// How long to wait for an orphaned server to exit before giving up, and how
+/// long to wait before escalating SIGTERM to SIGKILL.
+const REAP_TIMEOUT: Duration = Duration::from_secs(3);
+const REAP_ESCALATE_AFTER: Duration = Duration::from_millis(750);
 
 /// How often the health monitor probes the server.
 pub const HEALTH_CHECK_INTERVAL: Duration = Duration::from_secs(15);
@@ -89,22 +96,291 @@ pub struct TokenTrackerServer {
     background_sync: BackgroundSync,
 }
 
+/// Directories that may hold server records, most preferred first.
+///
+/// Deliberately excludes the `/tmp` fallback [`server_log_paths`] ends with:
+/// that directory is writable by every account, so another user could plant a
+/// forged record naming one of this user's PIDs and have the next launch signal
+/// it. A log line lost when no private state directory exists is acceptable; a
+/// signal sent on a stranger's say-so is not.
+pub fn server_record_dirs(xdg_state_home: Option<PathBuf>, home: Option<PathBuf>) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    if let Some(state_home) = xdg_state_home {
+        dirs.push(state_home.join("tokentracker").join("servers"));
+    }
+    if let Some(home) = home {
+        let dir = home
+            .join(".local")
+            .join("state")
+            .join("tokentracker")
+            .join("servers");
+        if !dirs.contains(&dir) {
+            dirs.push(dir);
+        }
+    }
+    dirs
+}
+
+/// One record per owning app process, rather than a single `server.json`.
+///
+/// Single-instance locking runs over the session D-Bus, so a second login
+/// session on the same account starts a second app. A shared file would let
+/// each session delete or overwrite the other's record, and the loser's server
+/// could then never be reaped -- leaving port 17680 held and OAuth broken,
+/// which is the failure this whole mechanism exists to prevent.
+pub fn server_record_name(owner_pid: i32) -> String {
+    format!("server-{owner_pid}.json")
+}
+
+/// Identity of a spawned server.
+///
+/// Deliberately *not* a filesystem path. An AppImage mounts itself at a fresh
+/// `/tmp/.mount_XXXXXX` on every launch, so the orphan's `node` and `tracker.js`
+/// paths never match the ones this launch resolved -- and the AppImage is the
+/// only Linux artifact the release workflow builds.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ServerRecord {
+    pub pid: i32,
+    pub port: u16,
+    /// Process start from `/proc/<pid>/stat`, pinning the record to one
+    /// specific process so a recycled PID is never mistaken for it.
+    pub start_time: u64,
+    /// `/proc/sys/kernel/random/boot_id`. `start_time` counts ticks since boot
+    /// and restarts from zero on every boot, so without this a record surviving
+    /// an unclean shutdown could match an unrelated process that merely landed
+    /// on the same PID at the same tick.
+    pub boot_id: String,
+    /// The app process that spawned this server, identified the same way.
+    /// "Orphaned" means the owner is gone, not merely that the child is alive.
+    pub owner_pid: i32,
+    pub owner_start_time: u64,
+}
+
+/// The current boot's identifier, or `None` where the kernel does not expose
+/// one -- in which case no record is written and nothing is ever signalled.
+pub fn boot_id() -> Option<String> {
+    std::fs::read_to_string("/proc/sys/kernel/random/boot_id")
+        .ok()
+        .map(|id| id.trim().to_string())
+        .filter(|id| !id.is_empty())
+}
+
+/// Read field 22 (`starttime`) of `/proc/<pid>/stat`.
+///
+/// Parsed after the final `)` because field 2 is the executable name and may
+/// itself contain spaces and parentheses.
+pub fn process_start_time(pid: i32) -> Option<u64> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let after_comm = &stat[stat.rfind(')')? + 1..];
+    after_comm.split_whitespace().nth(19)?.parse().ok()
+}
+
+/// True when `pid` is alive and is still the exact process described by
+/// `record` -- the check that makes signalling PID-reuse-safe.
+fn record_still_matches(record: &ServerRecord) -> bool {
+    boot_id().is_some_and(|id| id == record.boot_id)
+        && process_start_time(record.pid) == Some(record.start_time)
+}
+
+fn owner_still_running(record: &ServerRecord) -> bool {
+    process_start_time(record.owner_pid) == Some(record.owner_start_time)
+}
+
+fn record_dirs() -> Vec<PathBuf> {
+    let xdg_state_home = std::env::var_os("XDG_STATE_HOME").map(PathBuf::from);
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    server_record_dirs(xdg_state_home, home)
+}
+
+/// Persist the identity of a freshly spawned server.
+fn record_server(pid: u32, port: u16) {
+    let owner_pid = std::process::id() as i32;
+    let (Some(start_time), Some(owner_start_time), Some(boot_id)) = (
+        process_start_time(pid as i32),
+        process_start_time(owner_pid),
+        boot_id(),
+    ) else {
+        return;
+    };
+    let Ok(json) = serde_json::to_string(&ServerRecord {
+        pid: pid as i32,
+        port,
+        start_time,
+        boot_id,
+        owner_pid,
+        owner_start_time,
+    }) else {
+        return;
+    };
+
+    // Walk the whole candidate chain like `open_server_log`: settling for the
+    // first candidate would silently record nothing when XDG_STATE_HOME is
+    // read-only, leaving a later crash unrecoverable.
+    for dir in record_dirs() {
+        // 0700/0600 explicitly: a permissive umask (0002, or 0000) would
+        // otherwise leave these group- or world-writable, letting another
+        // account rewrite a victim-owned record in place -- the uid check in
+        // `read_record` would still pass, and this process would then signal
+        // whatever pid the forged record named.
+        let _ = std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(&dir);
+        let written = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(dir.join(server_record_name(owner_pid)))
+            .and_then(|mut file| file.write_all(json.as_bytes()));
+        if written.is_ok() {
+            return;
+        }
+    }
+}
+
+/// Remove only *this* process's record, never another session's.
+fn clear_server_record() {
+    let name = server_record_name(std::process::id() as i32);
+    for dir in record_dirs() {
+        let _ = std::fs::remove_file(dir.join(&name));
+    }
+}
+
+/// Read a record, rejecting anything this user does not own.
+fn read_record(path: &Path) -> Option<ServerRecord> {
+    // O_NOFOLLOW plus fstat on the descriptor actually read: checking the path
+    // and then reopening it would let a symlink be swapped in between the two.
+    let mut file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)
+        .ok()?;
+    let metadata = file.metadata().ok()?;
+    // SAFETY: getuid(2) is always successful.
+    if !metadata.is_file() || metadata.uid() != unsafe { libc::getuid() } {
+        return None;
+    }
+    // Writable by anyone but the owner means the contents cannot be trusted
+    // even though the owner is right.
+    if metadata.mode() & 0o022 != 0 {
+        return None;
+    }
+
+    let mut raw = Vec::new();
+    file.read_to_end(&mut raw).ok()?;
+    serde_json::from_slice(&raw).ok()
+}
+
+/// Stop servers orphaned by an earlier crash.
+///
+/// A GTK/Wayland failure calls `_exit(1)` -- verified: an `atexit` hook
+/// registered at startup never runs -- so neither `Drop` nor Tauri's
+/// `RunEvent::ExitRequested` fires and the Node child survives its parent. An
+/// orphan holding [`PREFERRED_PORT`] is not merely idle: it forces the next
+/// launch onto a random port, which silently costs OAuth sign-in.
+pub fn reap_orphaned_servers() -> Vec<i32> {
+    let mut reaped = Vec::new();
+
+    for dir in record_dirs() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Some(record) = read_record(&path) else {
+                continue;
+            };
+            // A live owner means another app instance is running this server,
+            // not that it was stranded. Leave its record in place: deleting it
+            // would strand that server permanently if it later crashed.
+            if owner_still_running(&record) {
+                continue;
+            }
+            let _ = std::fs::remove_file(&path);
+            if record.pid <= 0 || record.pid == std::process::id() as i32 {
+                continue;
+            }
+            if !record_still_matches(&record) {
+                continue;
+            }
+
+            // SAFETY: kill(2) on the negated pid signals the process group the
+            // server leads, which is the pid confirmed above.
+            unsafe {
+                libc::kill(-record.pid, libc::SIGTERM);
+            }
+            // Signalling is not enough: the listening socket outlives the
+            // signal, so returning here would let `pick_available_port` still
+            // find PREFERRED_PORT taken and fall back to a random one --
+            // exactly the OAuth failure this is meant to prevent.
+            wait_for_exit(&record, REAP_TIMEOUT, REAP_ESCALATE_AFTER);
+            reaped.push(record.pid);
+        }
+    }
+
+    reaped
+}
+
+/// Poll until the recorded process is gone, escalating to SIGKILL after
+/// `escalate_after`. Bounded: a process that never exits must not block startup.
+///
+/// Identity is rechecked before escalating, so a PID recycled inside the wait
+/// window is left alone rather than killed.
+fn wait_for_exit(record: &ServerRecord, timeout: Duration, escalate_after: Duration) {
+    let start = Instant::now();
+    let deadline = start + timeout;
+    let escalate_at = start + escalate_after;
+    let mut escalated = false;
+
+    loop {
+        if !record_still_matches(record) || Instant::now() >= deadline {
+            return;
+        }
+        if !escalated && Instant::now() >= escalate_at {
+            // SAFETY: identity revalidated by the check above on this same
+            // iteration, so this cannot land on a recycled PID.
+            unsafe {
+                libc::kill(-record.pid, libc::SIGKILL);
+            }
+            escalated = true;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
 impl TokenTrackerServer {
     pub fn start(paths: RuntimePaths) -> Result<Self, String> {
+        // Before picking a port: an orphan from an earlier crash holding
+        // PREFERRED_PORT would otherwise push this launch onto a random port
+        // and silently break OAuth sign-in.
+        for pid in reap_orphaned_servers() {
+            eprintln!("[TokenTracker] stopped an orphaned server from an earlier run (pid {pid})");
+        }
+
         let port = pick_available_port()?;
         let url = dashboard_url(port);
 
         let args = serve_args(&paths.tracker, port);
         let mut child = Command::new(&paths.node)
             .args(&args)
+            // Own process group: `bin/tracker.js` re-executes itself through
+            // `spawnSync` when a proxy is configured, so the process actually
+            // holding the port is a grandchild. Signalling the group reaches it;
+            // signalling this pid alone would leave it on 17680.
+            .process_group(0)
             .stdout(Stdio::null())
             .stderr(server_log_stdio())
             .spawn()
             .map_err(|error| format!("failed to start TokenTracker server: {error}"))?;
+        record_server(child.id(), port);
 
         wait_for_server_ready(port, READY_TIMEOUT).inspect_err(|_| {
-            let _ = child.kill();
-            let _ = child.wait();
+            // Group first, record second: `stop_child` reaches a proxy
+            // relaunch's grandchild, and if it somehow fails the record must
+            // still be on disk for the next launch to reap.
+            stop_child(Some(&mut child));
+            clear_server_record();
         })?;
 
         let background_sync = BackgroundSync::start(paths.clone());
@@ -145,8 +421,10 @@ impl TokenTrackerServer {
     /// handled by the health monitor after it releases the global server mutex,
     /// so app shutdown never waits for the full readiness timeout.
     pub fn restart_process(&mut self) -> Result<(), String> {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        // Group, not just the leader: with a proxy relaunch the listener is a
+        // grandchild, and leaving it alive means the replacement cannot bind
+        // the same port.
+        stop_child(Some(&mut self.child));
 
         // Brief pause for the OS to release the port.
         thread::sleep(Duration::from_millis(500));
@@ -159,16 +437,19 @@ impl TokenTrackerServer {
         let args = serve_args(&self.paths.tracker, self.port);
         self.child = Command::new(&self.paths.node)
             .args(&args)
+            .process_group(0)
             .stdout(Stdio::null())
             .stderr(log_file.map_or_else(Stdio::null, Stdio::from))
             .spawn()
             .map_err(|error| format!("failed to restart server: {error}"))?;
+        record_server(self.child.id(), self.port);
 
         Ok(())
     }
 
     pub fn stop(&mut self) {
         self.background_sync.stop();
+        clear_server_record();
         stop_child(Some(&mut self.child));
     }
 }
@@ -356,6 +637,23 @@ fn stop_child(child: Option<&mut Child>) {
     match child.try_wait() {
         Ok(Some(_)) => {}
         Ok(None) | Err(_) => {
+            // Same grandchild problem as the reaper: killing only the leader
+            // leaves a proxy-relaunched server holding the port.
+            let pgid = child.id() as i32;
+            // SAFETY: kill(2) on the group this child leads.
+            unsafe {
+                libc::kill(-pgid, libc::SIGTERM);
+            }
+            for _ in 0..20 {
+                if matches!(child.try_wait(), Ok(Some(_))) {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(50));
+            }
+            // SAFETY: as above; harmless once the group is already gone.
+            unsafe {
+                libc::kill(-pgid, libc::SIGKILL);
+            }
             let _ = child.kill();
             let _ = child.wait();
         }

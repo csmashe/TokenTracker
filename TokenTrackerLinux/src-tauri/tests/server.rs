@@ -10,8 +10,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
 
 use tokentracker_linux::server::{
-    dashboard_url, pick_available_port, rotate_log_if_oversized, serve_args, server_log_paths,
-    sync_args, MAX_LOG_BYTES,
+    boot_id, dashboard_url, pick_available_port, process_start_time, rotate_log_if_oversized,
+    serve_args, server_log_paths, server_record_dirs, server_record_name, sync_args, MAX_LOG_BYTES,
 };
 
 static COUNTER: AtomicU32 = AtomicU32::new(0);
@@ -255,3 +255,61 @@ const _: () = {
     assert!(MAX_LOG_BYTES >= 1024 * 1024);
     assert!(MAX_LOG_BYTES <= 64 * 1024 * 1024);
 };
+
+#[test]
+fn records_never_land_in_a_world_writable_directory() {
+    let dirs = server_record_dirs(Some(PathBuf::from("/state")), Some(PathBuf::from("/home/u")));
+
+    assert_eq!(dirs[0], PathBuf::from("/state/tokentracker/servers"));
+    assert_eq!(
+        dirs[1],
+        PathBuf::from("/home/u/.local/state/tokentracker/servers")
+    );
+
+    // No /tmp fallback, unlike the log: /tmp is writable by every account, so a
+    // forged record there could make this user signal one of their own PIDs.
+    assert!(dirs.iter().all(|dir| !dir.starts_with("/tmp")));
+    assert!(server_log_paths(None, None)
+        .iter()
+        .any(|path| path.starts_with("/tmp")));
+    assert!(server_record_dirs(None, None).is_empty());
+}
+
+#[test]
+fn each_owner_gets_its_own_record_file() {
+    // Two concurrent login sessions on one account each run an app instance,
+    // so a shared filename would let one delete or overwrite the other's
+    // record and strand its server permanently.
+    assert_eq!(server_record_name(1234), "server-1234.json");
+    assert_ne!(server_record_name(1234), server_record_name(5678));
+}
+
+#[test]
+fn process_start_time_identifies_a_specific_process() {
+    let own = std::process::id() as i32;
+    let first = process_start_time(own).expect("our own start time is readable");
+
+    // Stable across reads: this is what makes it usable as an identity, so a
+    // recycled PID cannot be mistaken for the recorded process.
+    assert_eq!(process_start_time(own), Some(first));
+
+    // A PID that cannot exist has no start time, so nothing is ever signalled
+    // on its behalf.
+    assert_eq!(process_start_time(-1), None);
+}
+
+#[test]
+fn a_record_is_bound_to_the_current_boot() {
+    // Sandboxes and containers can hide /proc/sys/kernel/random/boot_id.
+    // Production treats that as "record nothing, signal nothing", so absence is
+    // a supported state rather than a test failure.
+    let Some(id) = boot_id() else {
+        return;
+    };
+
+    assert!(!id.is_empty());
+    // Stable within a boot, so it can validate a persisted record; it changes
+    // on reboot, which is what invalidates a stale one whose PID and
+    // since-boot start tick could otherwise be matched by an unrelated process.
+    assert_eq!(boot_id(), Some(id));
+}
