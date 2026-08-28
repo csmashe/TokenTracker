@@ -95,7 +95,7 @@ impl TokenTrackerServer {
         let url = dashboard_url(port);
 
         let args = serve_args(&paths.tracker, port);
-        let mut child = Command::new(&paths.node)
+        let mut child = node_command(&paths.node)
             .args(&args)
             .stdout(Stdio::null())
             .stderr(server_log_stdio())
@@ -157,7 +157,7 @@ impl TokenTrackerServer {
         });
 
         let args = serve_args(&self.paths.tracker, self.port);
-        self.child = Command::new(&self.paths.node)
+        self.child = node_command(&self.paths.node)
             .args(&args)
             .stdout(Stdio::null())
             .stderr(log_file.map_or_else(Stdio::null, Stdio::from))
@@ -293,6 +293,14 @@ pub fn pick_available_port() -> Result<u16, String> {
     Ok(port)
 }
 
+/// Base command for every Node process the app spawns. Marks the process as
+/// app-shell `linux` so daily telemetry heartbeats don't report as `cli`.
+pub fn node_command(node: &Path) -> Command {
+    let mut command = Command::new(node);
+    command.env("TOKENTRACKER_APP_SHELL", "linux");
+    command
+}
+
 pub fn serve_args(tracker: &Path, port: u16) -> Vec<OsString> {
     vec![
         tracker.as_os_str().to_os_string(),
@@ -338,7 +346,7 @@ fn run_background_sync(paths: &RuntimePaths, child_slot: &Mutex<Option<Child>>) 
     }
 
     let args = sync_args(&paths.tracker);
-    match Command::new(&paths.node)
+    match node_command(&paths.node)
         .args(args)
         .stdout(Stdio::null())
         .stderr(server_log_stdio())
@@ -422,6 +430,16 @@ mod tests {
     #[test]
     fn dashboard_url_uses_loopback_http() {
         assert_eq!(dashboard_url(45678), "http://127.0.0.1:45678");
+    }
+
+    #[test]
+    fn node_command_marks_the_linux_app_shell() {
+        let command = node_command(Path::new("/opt/tokentracker/node"));
+        let shell = command
+            .get_envs()
+            .find(|(key, _)| *key == "TOKENTRACKER_APP_SHELL")
+            .and_then(|(_, value)| value);
+        assert_eq!(shell, Some("linux".as_ref()));
     }
 
     #[test]

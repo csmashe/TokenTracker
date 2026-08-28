@@ -260,7 +260,7 @@ flowchart LR
 | **不上传内容** | 只记录 token 数量和时间戳。**绝不**记录 prompt、回复或文件内容 |
 | **默认纯本地** | 所有数据保留在你的机器上。排行榜是完全 opt-in |
 | **可审计** | 代码开源。[`src/lib/rollout.js`](src/lib/rollout.js) 里只有数字和时间戳 |
-| **仅匿名使用统计** | 只有两类匿名上报：(1) 每天最多一次的心跳——机器 ID 的单向哈希、应用版本、操作系统平台、运行形态（cli/mac/win）；(2) 匿名的 dashboard 页面/功能事件（PostHog——已关闭 autocapture 和会话录制，尊重浏览器 Do-Not-Track）。绝不包含 token 数量、模型名、prompt 或路径。可在 [`src/lib/telemetry.js`](src/lib/telemetry.js) 与 [`dashboard/src/lib/analytics.js`](dashboard/src/lib/analytics.js) 审计；一个开关同时关闭两者：`TOKENTRACKER_NO_TELEMETRY=1`（或 `DO_NOT_TRACK=1`） |
+| **仅匿名使用统计** | 只有两类匿名上报：(1) 每天最多一次的心跳——机器 ID 的单向哈希、应用版本、操作系统平台、运行形态（cli/mac/win/linux）；(2) 匿名的 dashboard 页面/功能事件（PostHog——已关闭 autocapture 和会话录制，尊重浏览器 Do-Not-Track）。绝不包含 token 数量、模型名、prompt 或路径。可在 [`src/lib/telemetry.js`](src/lib/telemetry.js) 与 [`dashboard/src/lib/analytics.js`](dashboard/src/lib/analytics.js) 审计；一个开关同时关闭两者：`TOKENTRACKER_NO_TELEMETRY=1`（或 `DO_NOT_TRACK=1`） |
 
 ---
 

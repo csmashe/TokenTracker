@@ -324,7 +324,7 @@ flowchart LR
 | **No content upload** | Only token counts and timestamps. Never prompts, responses, or file contents. |
 | **Local-only by default** | All data stays on your machine. The leaderboard is fully opt-in. |
 | **Auditable** | Open source. Read [`src/lib/rollout.js`](src/lib/rollout.js) — only numbers and timestamps. |
-| **Anonymous usage stats only** | Two things phone home, both anonymous: (1) at most one daily heartbeat — a one-way hash of the machine id, app version, OS platform, and app shell (cli/mac/win); (2) anonymous dashboard pageview/feature events (PostHog — autocapture and session recording disabled, browser Do-Not-Track respected). Never token counts, model names, prompts, or paths. Audit [`src/lib/telemetry.js`](src/lib/telemetry.js) and [`dashboard/src/lib/analytics.js`](dashboard/src/lib/analytics.js); one switch disables both on your machine: `TOKENTRACKER_NO_TELEMETRY=1` (or `DO_NOT_TRACK=1`). |
+| **Anonymous usage stats only** | Two things phone home, both anonymous: (1) at most one daily heartbeat — a one-way hash of the machine id, app version, OS platform, and app shell (cli/mac/win/linux); (2) anonymous dashboard pageview/feature events (PostHog — autocapture and session recording disabled, browser Do-Not-Track respected). Never token counts, model names, prompts, or paths. Audit [`src/lib/telemetry.js`](src/lib/telemetry.js) and [`dashboard/src/lib/analytics.js`](dashboard/src/lib/analytics.js); one switch disables both on your machine: `TOKENTRACKER_NO_TELEMETRY=1` (or `DO_NOT_TRACK=1`). |
 
 ---
 
