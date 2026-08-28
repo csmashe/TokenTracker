@@ -7,15 +7,21 @@ window, and keeps a tray icon alive.
 
 Two distribution paths are supported:
 
-- **AppImage** — the released artifact, built by CI. Self-contained (it carries
-  its own Node runtime and the built dashboard) and runs on any reasonably
-  current glibc distro without a package manager.
-- **AppImage, `.deb` and `.rpm`** — published on every release.
+- **Release packages** — an **AppImage**, a **`.deb`** and an **`.rpm`**, built
+  by CI and attached to every release.
 - **Arch package** — a `PKGBUILD` for building from a local checkout.
 
 ## Install
 
-Download `TokenTracker-linux-x86_64.AppImage` from the
+All three release packages carry the same embedded Node runtime and dashboard.
+
+### AppImage
+
+Self-contained — besides the Node runtime and the built dashboard it carries
+GTK3, WebKitGTK (including the `WebKitWebProcess` / `WebKitNetworkProcess`
+helpers) and appindicator, so it runs on any reasonably current glibc distro
+with no package manager and no GUI dependencies. Download
+`TokenTracker-linux-x86_64.AppImage` from the
 [latest release](https://github.com/xiufengsun/TokenTracker/releases/latest),
 then:
 
@@ -49,9 +55,11 @@ sudo dnf install ./TokenTracker-linux-x86_64.rpm
 ```
 
 The `.deb` and `.rpm` link against the system GTK/WebKit rather than bundling
-them, so they are roughly half the AppImage's size but depend on the distro
-shipping a compatible `webkit2gtk-4.1`. All three carry the same embedded Node
-runtime and dashboard.
+them — ~55MB against the AppImage's ~120MB, at the cost of a real dependency
+list. The `.deb` declares `libwebkit2gtk-4.1-0`, `libgtk-3-0`,
+`libayatana-appindicator3-1` and `libappindicator3-1`; the `.rpm` requires the
+equivalent `libwebkit2gtk-4.1.so.0`, `libgtk-3.so.0` and
+`libappindicator3.so.1`.
 
 ## Build the Arch package
 

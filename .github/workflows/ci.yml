@@ -82,9 +82,10 @@ jobs:
           persist-credentials: false
 
       # webkit2gtk + friends are needed to COMPILE the tauri crate, even though
-      # nothing here launches a webview. Bundling the AppImage is deliberately
-      # left to the release workflow: it needs the ~100MB embedded Node runtime
-      # and appimagetool, which would slow every PR down for no extra signal.
+      # nothing here launches a webview. Bundling the release packages
+      # (AppImage, .deb, .rpm) is deliberately left to the release workflow:
+      # they need the ~100MB embedded Node runtime plus appimagetool and the
+      # rpm tooling, which would slow every PR down for no extra signal.
       - name: Install Tauri build dependencies
         run: |
           set -euo pipefail

@@ -91,7 +91,7 @@ That's it. First run installs hooks, syncs your data, and opens the dashboard at
 > **Want a native desktop app?**
 > - **macOS** — [Download `TokenTrackerBar.dmg`](https://github.com/xiufengsun/TokenTracker/releases/latest/download/TokenTrackerBar.dmg) → drag to Applications. Menu bar status icon, desktop widgets, and the dashboard in a WKWebView.
 > - **Windows** — [Download `TokenTracker-Setup.exe`](https://github.com/xiufengsun/TokenTracker/releases/latest/download/TokenTracker-Setup.exe) → run the per-user installer (no admin needed). System-tray app with the dashboard in WebView2. Portable zip also on the [releases page](https://github.com/xiufengsun/TokenTracker/releases/latest).
-> - **Linux** — [Download `TokenTracker-linux-x86_64.AppImage`](https://github.com/xiufengsun/TokenTracker/releases/latest/download/TokenTracker-linux-x86_64.AppImage) → `chmod +x` and run. Tray app with the dashboard in a WebKitGTK window. Needs `webkit2gtk-4.1`, `gtk3` and `libayatana-appindicator` from your distro; on GNOME the tray icon also needs the [AppIndicator extension](https://extensions.gnome.org/extension/615/appindicator-support/).
+> - **Linux** — [Download `TokenTracker-linux-x86_64.AppImage`](https://github.com/xiufengsun/TokenTracker/releases/latest/download/TokenTracker-linux-x86_64.AppImage) → `chmod +x` and run. Tray app with the dashboard in a WebKitGTK window. It carries its own GTK/WebKit, so it needs nothing from your distro beyond a current glibc; on GNOME the tray icon still needs the [AppIndicator extension](https://extensions.gnome.org/extension/615/appindicator-support/). `.deb` and `.rpm` packages are also on the [releases page](https://github.com/xiufengsun/TokenTracker/releases/latest) — those link the distro's `webkit2gtk-4.1`, `gtk3` and appindicator instead.
 
 Install globally for shorter commands:
 
@@ -120,16 +120,23 @@ brew install xiufengsun/tokentracker/tokentracker
 
 Upgrade with `brew upgrade --cask xiufengsun/tokentracker/tokentracker`. The tap auto-bumps within an hour of every new release.
 
-### 🐧 Linux (AppImage)
+### 🐧 Linux (AppImage, `.deb`, `.rpm`)
 
-One self-contained file, no package manager:
+Every release ships all three. One self-contained file, no package manager:
 
 ```bash
 chmod +x TokenTracker-linux-x86_64.AppImage
 ./TokenTracker-linux-x86_64.AppImage
 ```
 
-It bundles its own Node runtime and the dashboard, and needs `webkit2gtk-4.1`, `gtk3`, `libayatana-appindicator` and `librsvg` from your distro. Tested on Arch + KDE Plasma; on GNOME the tray icon requires the [AppIndicator extension](https://extensions.gnome.org/extension/615/appindicator-support/), and clicking the tray icon opens the menu rather than the window (a libayatana-appindicator limitation).
+Or install through your package manager:
+
+```bash
+sudo apt install ./TokenTracker-linux-x86_64.deb    # Debian / Ubuntu
+sudo dnf install ./TokenTracker-linux-x86_64.rpm    # Fedora / RHEL
+```
+
+All three bundle their own Node runtime and the dashboard. The AppImage additionally carries GTK3, WebKitGTK and appindicator, which is why it is ~120MB and installs nowhere; the `.deb` and `.rpm` link the distro's `webkit2gtk-4.1`, `gtk3` and appindicator instead, at ~55MB. Tested on Arch + KDE Plasma; on GNOME the tray icon requires the [AppIndicator extension](https://extensions.gnome.org/extension/615/appindicator-support/), and clicking the tray icon opens the menu rather than the window (a libayatana-appindicator limitation).
 
 An Arch `PKGBUILD` for a local pacman install lives in `TokenTrackerLinux/packaging/arch/tokentracker-linux` — see [`TokenTrackerLinux/README.md`](TokenTrackerLinux/README.md). It is not published to the AUR.
 
