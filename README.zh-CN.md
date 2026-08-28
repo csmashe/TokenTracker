@@ -56,7 +56,7 @@ npx tokentracker-cli
 > **想要原生桌面 App？**
 > - **macOS** —— [下载 `TokenTrackerBar.dmg`](https://github.com/xiufengsun/TokenTracker/releases/latest/download/TokenTrackerBar.dmg) → 拖入「应用程序」即可。包含桌面小组件、菜单栏状态图标，以及同一套 Dashboard（跑在 WKWebView 里）。
 > - **Windows** —— [下载 `TokenTracker-Setup.exe`](https://github.com/xiufengsun/TokenTracker/releases/latest/download/TokenTracker-Setup.exe) → 运行免管理员的单用户安装包即可。系统托盘 App，Dashboard 跑在 WebView2 里。便携版 zip 见[发布页](https://github.com/xiufengsun/TokenTracker/releases/latest)。
-> - **Linux** —— [下载 `TokenTracker-linux-x86_64.AppImage`](https://github.com/xiufengsun/TokenTracker/releases/latest/download/TokenTracker-linux-x86_64.AppImage) → `chmod +x` 后直接运行。托盘 App，Dashboard 跑在 WebKitGTK 窗口里。AppImage 自带 GTK/WebKit，除了较新的 glibc 之外不依赖发行版的库；GNOME 上托盘图标仍需装 [AppIndicator 扩展](https://extensions.gnome.org/extension/615/appindicator-support/)。[发布页](https://github.com/xiufengsun/TokenTracker/releases/latest)同时提供 `.deb` 与 `.rpm` 安装包，它们改用发行版自带的 `webkit2gtk-4.1`、`gtk3` 与 appindicator。
+> - **Linux** —— [下载 `TokenTracker-linux-x86_64.AppImage`](https://github.com/xiufengsun/TokenTracker/releases/latest/download/TokenTracker-linux-x86_64.AppImage) → `chmod +x` 后直接运行。托盘 App，Dashboard 跑在 WebKitGTK 窗口里。AppImage 自带 GTK/WebKit，除了较新的 glibc 之外不依赖发行版的库；GNOME 上托盘图标仍需装 [AppIndicator 扩展](https://extensions.gnome.org/extension/615/appindicator-support/)。[发布页](https://github.com/xiufengsun/TokenTracker/releases/latest)同时提供 `.deb` 与 `.rpm` 安装包，它们改用发行版自带的 `webkit2gtk-4.1`、`gtk3` 与 appindicator；其中 `.deb` 依赖 `libappindicator3-1`，Debian 12 已改为 `libayatana-appindicator3-1` 而不再提供它，因此 Debian 12 请用 AppImage。
 
 全局安装可以少敲字：
 
