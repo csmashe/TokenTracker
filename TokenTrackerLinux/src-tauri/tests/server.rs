@@ -47,17 +47,17 @@ impl Drop for TempDir {
 
 const PREFERRED_PORT: u16 = 17680;
 
-// Held by every test here that binds a port, because cargo runs them in
-// parallel. Two distinct races, both of which have actually fired:
+// Held by every test here that binds a port *or forks*, because cargo runs them
+// in parallel. Two races, both of which have actually fired:
 //
 //   - Both port tests bind PREFERRED_PORT. The free-port case drops its probe
 //     before calling pick_available_port(), which is exactly the window the
 //     fallback case spends holding that same port, so unserialized the
 //     free-port case gets handed a fallback port.
-//   - pick_available_port() reports a port it has already released, so any
-//     concurrent bind of port 0 can be handed that same number before the
-//     fallback case re-binds it -- which is how the orphan tests below, which
-//     take ephemeral ports of their own, broke that assertion on CI.
+//   - `fork` duplicates every open descriptor, and CLOEXEC only closes them at
+//     `exec`, so a process spawned by one test holds a copy of whatever socket
+//     another test has open in between. Both port tests re-bind a port they
+//     just released, and that copy makes the re-bind EADDRINUSE.
 //
 // Poisoning is recovered from rather than propagated: one test panicking must
 // not turn the others into further, misleading failures.
@@ -357,16 +357,18 @@ fn a_descendant_still_holding_the_port_outlives_the_leader() {
     // The subshell ignores SIGTERM and keeps listening; the leader takes the
     // default disposition and dies, exactly like a server whose child shuts down
     // slower than its parent.
-    let Some(tree) =
-        OrphanTree::spawn("( trap '' TERM; : > {ready}; while :; do sleep 1; done ) &")
-    else {
+    let Some(tree) = OrphanTree::spawn(
+        "( trap ': > {signalled}' TERM; : > {ready}; while :; do sleep 1; done ) &",
+    ) else {
         return;
     };
 
+    // A full second before escalation: `kill` only queues SIGTERM, so a shorter
+    // window lets SIGKILL beat the descendant's trap to the marker below.
     let recovered = stop_recorded_server(
         &tree.record(),
         Duration::from_secs(5),
-        Duration::from_millis(250),
+        Duration::from_secs(1),
     );
 
     assert!(
@@ -374,10 +376,57 @@ fn a_descendant_still_holding_the_port_outlives_the_leader() {
         "the reap must report the port recovered only once nothing holds it"
     );
     assert!(
+        tree.was_signalled(),
+        "the descendant should have seen the group's SIGTERM before being killed"
+    );
+    assert!(
         port_is_bindable(tree.port),
         "the descendant kept port {}; reaping must wait for the whole process group, \
          not just the recorded leader, or startup silently falls back to a random port",
         tree.port
+    );
+}
+
+/// A leader that has already exited leaves nothing that can identify its group:
+/// its pgid is reusable once the group empties, and the recorded port is a fixed
+/// number another instance may hold. Neither authorizes a signal. Pinned because
+/// the tempting fix is to signal it anyway.
+#[test]
+fn a_leaderless_group_is_never_signalled() {
+    let Some(tree) = OrphanTree::spawn(
+        "( trap ': > {signalled}' TERM; : > {ready}; while :; do sleep 1; done ) &",
+    ) else {
+        return;
+    };
+    // Captured while the leader lives, like a record written before the crash.
+    let record = tree.record();
+
+    // SAFETY: a plain pid, not a group: only the leader dies, and the descendant
+    // it spawned stays behind holding the port.
+    unsafe {
+        libc::kill(record.pid, libc::SIGKILL);
+    }
+    wait_for(Duration::from_secs(5), || {
+        process_start_time(record.pid).is_none().then_some(())
+    })
+    .expect("the leader should be gone and reaped by init");
+
+    let recovered =
+        stop_recorded_server(&record, Duration::from_secs(2), Duration::from_millis(250));
+
+    assert!(
+        !recovered,
+        "the port is still held, so nothing was recovered"
+    );
+    // The descendant survives SIGTERM by design, so survival proves nothing and
+    // delivery itself is asserted on. Polled, not sampled once: a trap and a
+    // SIGKILL teardown both land after `kill` has already returned.
+    let breach = wait_for(Duration::from_millis(300), || {
+        (tree.was_signalled() || port_is_bindable(tree.port)).then_some(())
+    });
+    assert!(
+        breach.is_none(),
+        "a group with no identifiable leader was signalled"
     );
 }
 
@@ -428,6 +477,7 @@ fn a_group_signal_is_never_aimed_at_the_whole_session() {
 struct OrphanTree {
     pid: i32,
     port: u16,
+    signalled: PathBuf,
     _scratch: TempDir,
     /// Held for as long as the tree owns its port, so the ephemeral port it
     /// takes cannot land on one `pick_available_port` has just released.
@@ -446,15 +496,17 @@ impl OrphanTree {
     /// Returns `None` where the tree cannot be built, which is a skip rather than
     /// a failure: `setsid` is util-linux, not POSIX.
     fn spawn(descendant: &str) -> Option<Self> {
+        // Taken before the first fork, not just the first bind: see PORT_GUARD.
+        let serial = port_guard();
         if !command_exists("setsid") {
             eprintln!("setsid is unavailable on this machine; skipping");
             return None;
         }
 
-        let serial = port_guard();
         let scratch = TempDir::new("orphan");
         let pidfile = scratch.path().join("leader.pid");
         let ready = scratch.path().join("descendant.ready");
+        let signalled = scratch.path().join("descendant.sigterm");
         let listener =
             TcpListener::bind(("127.0.0.1", 0)).expect("a scratch port should be bindable");
         let port = listener
@@ -470,7 +522,9 @@ impl OrphanTree {
         let leader = format!(
             "exec 3<&0; echo $$ > {pidfile}; {descendant} while :; do sleep 1; done",
             pidfile = pidfile.display(),
-            descendant = descendant.replace("{ready}", &ready.display().to_string())
+            descendant = descendant
+                .replace("{ready}", &ready.display().to_string())
+                .replace("{signalled}", &signalled.display().to_string())
         );
         // `setsid` is invoked directly rather than through a shell: the script
         // has to reach the inner `sh` unexpanded, and `$$` inside a nested quoted
@@ -498,6 +552,7 @@ impl OrphanTree {
         let tree = Self {
             pid,
             port,
+            signalled,
             _scratch: scratch,
             _serial: serial,
         };
@@ -507,6 +562,12 @@ impl OrphanTree {
         })
         .expect("the descendant should exist, and the tree lead its own group and hold the port");
         Some(tree)
+    }
+
+    /// Whether the descendant has seen a SIGTERM -- which surviving one does not
+    /// tell you.
+    fn was_signalled(&self) -> bool {
+        self.signalled.exists()
     }
 
     fn record(&self) -> ServerRecord {
