@@ -85,8 +85,14 @@ test('icon sync replaces a destination symlink without writing through it', () =
     syncTauriIcon(canonicalIconPath, destination);
 
     assert.equal(fs.readFileSync(sentinel, 'utf8'), 'do not replace');
-    assert.equal(fs.lstatSync(destination).isSymbolicLink(), false);
-    assert.equal(pngHeader(fs.readFileSync(destination)).colorType, 6);
+    // O_NOFOLLOW: throws if the destination is still a symlink, and the same
+    // open serves the content read — no check-then-use race.
+    const fd = fs.openSync(destination, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    try {
+      assert.equal(pngHeader(fs.readFileSync(fd)).colorType, 6);
+    } finally {
+      fs.closeSync(fd);
+    }
   } finally {
     fs.rmSync(temporaryDirectory, { recursive: true, force: true });
   }
