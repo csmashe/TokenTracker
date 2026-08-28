@@ -20,6 +20,13 @@ const READINESS_PATH: &str = "/functions/tokentracker-user-status";
 const REAP_TIMEOUT: Duration = Duration::from_secs(3);
 const REAP_ESCALATE_AFTER: Duration = Duration::from_millis(750);
 
+/// The same, for a server this process is shutting down on its way out.
+const STOP_TIMEOUT: Duration = Duration::from_secs(2);
+const STOP_ESCALATE_AFTER: Duration = Duration::from_secs(1);
+
+/// How often either wait re-checks the process group.
+const EXIT_POLL_INTERVAL: Duration = Duration::from_millis(50);
+
 /// How often the health monitor probes the server.
 pub const HEALTH_CHECK_INTERVAL: Duration = Duration::from_secs(15);
 
@@ -196,6 +203,35 @@ pub fn leads_own_process_group(pid: i32) -> bool {
     unsafe { libc::getpgid(pid) == pid }
 }
 
+/// Whether any process remains in the group led by `pgid`.
+///
+/// `kill(-pgid, 0)` asks about the *group*, so this stays true after the leader
+/// exits while a descendant runs on -- which is the case that matters, because
+/// the descendant is what holds the port. `EPERM` means members exist that this
+/// process may not signal, which is still "alive" for the purpose of deciding
+/// whether the port has been released.
+///
+/// Note the ordering property this relies on: a task closes its file
+/// descriptors during exit, before it leaves its process group, so an empty
+/// group is proof the listening socket is gone -- strictly stronger than
+/// probing the port.
+pub fn group_still_alive(pgid: i32) -> bool {
+    if pgid <= 1 {
+        return false;
+    }
+    // SAFETY: signal 0 runs kill(2)'s existence and permission checks without
+    // delivering anything.
+    if unsafe { libc::kill(-pgid, 0) } == 0 {
+        return true;
+    }
+    std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+/// Whether `port` can be bound right now, i.e. nothing is listening on it.
+fn port_is_free(port: u16) -> bool {
+    TcpListener::bind(("127.0.0.1", port)).is_ok()
+}
+
 fn owner_still_running(record: &ServerRecord) -> bool {
     process_start_time(record.owner_pid) == Some(record.owner_start_time)
 }
@@ -286,6 +322,17 @@ fn read_record(path: &Path) -> Option<ServerRecord> {
     serde_json::from_slice(&raw).ok()
 }
 
+/// What became of one orphaned server.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReapOutcome {
+    pub pid: i32,
+    pub port: u16,
+    /// Whether the recorded port is actually bindable again. False means the
+    /// next launch will fall back to a random port, which is worth saying out
+    /// loud: it is precisely the state that breaks OAuth sign-in silently.
+    pub port_recovered: bool,
+}
+
 /// Stop servers orphaned by an earlier crash.
 ///
 /// A GTK/Wayland failure calls `_exit(1)` -- verified: an `atexit` hook
@@ -293,7 +340,7 @@ fn read_record(path: &Path) -> Option<ServerRecord> {
 /// `RunEvent::ExitRequested` fires and the Node child survives its parent. An
 /// orphan holding [`PREFERRED_PORT`] is not merely idle: it forces the next
 /// launch onto a random port, which silently costs OAuth sign-in.
-pub fn reap_orphaned_servers() -> Vec<i32> {
+pub fn reap_orphaned_servers() -> Vec<ReapOutcome> {
     let mut reaped = Vec::new();
 
     for dir in record_dirs() {
@@ -318,54 +365,91 @@ pub fn reap_orphaned_servers() -> Vec<i32> {
             if !record_still_matches(&record) {
                 continue;
             }
-            // Only a group leader may be negated; anything else would signal a
-            // group this process never created.
-            if !leads_own_process_group(record.pid) {
-                continue;
-            }
-
-            // SAFETY: kill(2) on the negated pid signals the process group the
-            // server leads, confirmed directly above.
-            unsafe {
-                libc::kill(-record.pid, libc::SIGTERM);
-            }
-            // Signalling is not enough: the listening socket outlives the
-            // signal, so returning here would let `pick_available_port` still
-            // find PREFERRED_PORT taken and fall back to a random one --
-            // exactly the OAuth failure this is meant to prevent.
-            wait_for_exit(&record, REAP_TIMEOUT, REAP_ESCALATE_AFTER);
-            reaped.push(record.pid);
+            let port_recovered = stop_recorded_server(&record, REAP_TIMEOUT, REAP_ESCALATE_AFTER);
+            reaped.push(ReapOutcome {
+                pid: record.pid,
+                port: record.port,
+                port_recovered,
+            });
         }
     }
 
     reaped
 }
 
-/// Poll until the recorded process is gone, escalating to SIGKILL after
-/// `escalate_after`. Bounded: a process that never exits must not block startup.
+/// Signal one recorded server's process group and wait for the port to come
+/// back. Returns whether it did.
 ///
-/// Identity is rechecked before escalating, so a PID recycled inside the wait
-/// window is left alone rather than killed.
-fn wait_for_exit(record: &ServerRecord, timeout: Duration, escalate_after: Duration) {
+/// Split out of [`reap_orphaned_servers`] so the wait can be exercised against a
+/// real process tree without going through the on-disk records.
+pub fn stop_recorded_server(
+    record: &ServerRecord,
+    timeout: Duration,
+    escalate_after: Duration,
+) -> bool {
+    // Only a group leader may be negated; anything else would signal a group
+    // this process never created.
+    if !leads_own_process_group(record.pid) {
+        return port_is_free(record.port);
+    }
+
+    // SAFETY: kill(2) on the negated pid signals the process group the server
+    // leads, confirmed directly above.
+    unsafe {
+        libc::kill(-record.pid, libc::SIGTERM);
+    }
+    // Signalling is not enough: the listening socket outlives the signal, so
+    // returning here would let `pick_available_port` still find PREFERRED_PORT
+    // taken and fall back to a random one -- exactly the OAuth failure this is
+    // meant to prevent.
+    if !wait_for_exit(record, timeout, escalate_after) {
+        return false;
+    }
+    // The group is gone, which normally means the socket is closed with it. A
+    // descendant that called setsid() would have left the group and survived the
+    // signal, so the port is checked rather than assumed: reporting a recovery
+    // that did not happen is how this failure stayed invisible before.
+    port_is_free(record.port)
+}
+
+/// Poll until the recorded server's process *group* is empty, escalating to
+/// SIGKILL after `escalate_after`. Returns whether it emptied within `timeout`;
+/// bounded, because a process that never exits must not block startup.
+///
+/// Waiting on the group rather than on `record.pid` is the point. `bin/tracker.js`
+/// re-executes itself through `spawnSync` when a proxy is configured, so the
+/// process holding the port is a grandchild, and it can outlive the leader that
+/// SIGTERM kills. Returning when the leader died would report the port recovered
+/// while a descendant still listens on it.
+fn wait_for_exit(record: &ServerRecord, timeout: Duration, escalate_after: Duration) -> bool {
     let start = Instant::now();
     let deadline = start + timeout;
     let escalate_at = start + escalate_after;
     let mut escalated = false;
 
     loop {
-        if !record_still_matches(record) || Instant::now() >= deadline {
-            return;
+        if !group_still_alive(record.pid) {
+            return true;
         }
-        if !escalated && Instant::now() >= escalate_at && leads_own_process_group(record.pid) {
-            // SAFETY: identity and group leadership revalidated on this same
-            // iteration, so this cannot land on a recycled PID or a foreign
-            // group.
+        if Instant::now() >= deadline {
+            return false;
+        }
+        if !escalated && Instant::now() >= escalate_at {
+            // SAFETY: the group has been observed alive on every iteration since
+            // the SIGTERM that opened this wait -- the loop returns the instant
+            // it is not -- and the kernel keeps a pid number reserved while it
+            // is still some group's pgid. So `-record.pid` cannot have been
+            // freed and recycled into a stranger's group underneath us.
+            //
+            // `leads_own_process_group` is deliberately not rechecked here: once
+            // the leader exits it can never hold again, and requiring it is what
+            // let a surviving descendant keep the port.
             unsafe {
                 libc::kill(-record.pid, libc::SIGKILL);
             }
             escalated = true;
         }
-        thread::sleep(Duration::from_millis(50));
+        thread::sleep(EXIT_POLL_INTERVAL);
     }
 }
 
@@ -374,8 +458,23 @@ impl TokenTrackerServer {
         // Before picking a port: an orphan from an earlier crash holding
         // PREFERRED_PORT would otherwise push this launch onto a random port
         // and silently break OAuth sign-in.
-        for pid in reap_orphaned_servers() {
-            eprintln!("[TokenTracker] stopped an orphaned server from an earlier run (pid {pid})");
+        for outcome in reap_orphaned_servers() {
+            let ReapOutcome {
+                pid,
+                port,
+                port_recovered,
+            } = outcome;
+            if port_recovered {
+                eprintln!(
+                    "[TokenTracker] stopped an orphaned server from an earlier run \
+                     (pid {pid}, port {port} released)"
+                );
+            } else {
+                eprintln!(
+                    "[TokenTracker] an orphaned server (pid {pid}) still holds port {port}; \
+                     this launch will fall back to a random port and OAuth sign-in may fail"
+                );
+            }
         }
 
         let port = pick_available_port()?;
@@ -657,45 +756,49 @@ fn stop_child(child: Option<&mut Child>) {
     let Some(child) = child else {
         return;
     };
-    match child.try_wait() {
-        Ok(Some(_)) => {}
-        Ok(None) | Err(_) => {
-            // Same grandchild problem as the reaper: killing only the leader
-            // leaves a proxy-relaunched server holding the port. Every child
-            // spawned here uses `process_group(0)`, but check rather than
-            // assume -- negating a pid that leads no group would signal one
-            // this process never created.
-            let pgid = child.id() as i32;
-            let group = leads_own_process_group(pgid);
-            if group {
-                // SAFETY: kill(2) on the group this child leads.
-                unsafe {
-                    libc::kill(-pgid, libc::SIGTERM);
-                }
-            }
+    if matches!(child.try_wait(), Ok(Some(_))) {
+        return;
+    }
 
-            let mut exited = false;
-            for _ in 0..20 {
-                if matches!(child.try_wait(), Ok(Some(_))) {
-                    exited = true;
-                    break;
-                }
-                thread::sleep(Duration::from_millis(50));
-            }
+    // Same grandchild problem as the reaper: killing only the leader leaves a
+    // proxy-relaunched server holding the port. Every child spawned here uses
+    // `process_group(0)`, but check rather than assume -- negating a pid that
+    // leads no group would signal one this process never created.
+    let pgid = child.id() as i32;
+    if leads_own_process_group(pgid) {
+        // SAFETY: kill(2) on the group this child leads.
+        unsafe {
+            libc::kill(-pgid, libc::SIGTERM);
+        }
 
-            // Escalate only while the leader is still unreaped. Once `try_wait`
-            // reaps it the pid is free to be recycled, and `-pgid` could then
-            // name a stranger's group.
-            if !exited && group && leads_own_process_group(pgid) {
-                // SAFETY: leadership revalidated immediately above.
+        // Wait on the group, not on the leader. Waiting for `try_wait` alone
+        // returns as soon as the leader dies, and a descendant that shuts down
+        // more slowly then survives with the port. The leader is reaped inside
+        // the loop because a zombie is still a group member, so leaving it
+        // unreaped would make the group look alive until the deadline.
+        let deadline = Instant::now() + STOP_TIMEOUT;
+        let escalate_at = Instant::now() + STOP_ESCALATE_AFTER;
+        let mut escalated = false;
+        loop {
+            let _ = child.try_wait();
+            if !group_still_alive(pgid) || Instant::now() >= deadline {
+                break;
+            }
+            if !escalated && Instant::now() >= escalate_at {
+                // SAFETY: the group has been alive on every iteration since the
+                // SIGTERM above, and a pid stays reserved while it is still some
+                // group's pgid, so this cannot reach a recycled pid's group.
                 unsafe {
                     libc::kill(-pgid, libc::SIGKILL);
                 }
+                escalated = true;
             }
-            let _ = child.kill();
-            let _ = child.wait();
+            thread::sleep(EXIT_POLL_INTERVAL);
         }
     }
+
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 pub fn wait_for_server_ready(port: u16, timeout: Duration) -> Result<(), String> {

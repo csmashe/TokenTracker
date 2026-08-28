@@ -5,14 +5,17 @@
 use std::ffi::OsString;
 use std::fs;
 use std::net::TcpListener;
+use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use tokentracker_linux::server::{
-    boot_id, dashboard_url, leads_own_process_group, pick_available_port, process_start_time,
-    rotate_log_if_oversized, serve_args, server_log_paths, server_record_dirs, server_record_name,
-    sync_args, MAX_LOG_BYTES,
+    boot_id, dashboard_url, group_still_alive, leads_own_process_group, pick_available_port,
+    process_start_time, rotate_log_if_oversized, serve_args, server_log_paths, server_record_dirs,
+    server_record_name, stop_recorded_server, sync_args, ServerRecord, MAX_LOG_BYTES,
 };
 
 static COUNTER: AtomicU32 = AtomicU32::new(0);
@@ -336,4 +339,209 @@ fn only_real_group_leaders_can_be_signalled_by_group() {
     // SAFETY: getpgid(2) on our own pid.
     let pgid = unsafe { libc::getpgid(own) };
     assert_eq!(leads_own_process_group(own), pgid == own);
+}
+
+/// The case the whole mechanism exists for: `bin/tracker.js` re-executes itself
+/// through `spawnSync` when a proxy is configured, so the process holding the
+/// port is a grandchild. It can outlive the leader that SIGTERM kills, and a
+/// reaper that watches only the recorded pid then reports success while the port
+/// is still taken -- which sends startup to a random port and breaks OAuth.
+#[test]
+fn a_descendant_still_holding_the_port_outlives_the_leader() {
+    // The subshell ignores SIGTERM and keeps listening; the leader takes the
+    // default disposition and dies, exactly like a server whose child shuts down
+    // slower than its parent.
+    let Some(tree) = OrphanTree::spawn("( trap '' TERM; while :; do sleep 1; done ) &") else {
+        return;
+    };
+
+    let recovered = stop_recorded_server(
+        &tree.record(),
+        Duration::from_secs(5),
+        Duration::from_millis(250),
+    );
+
+    assert!(
+        recovered,
+        "the reap must report the port recovered only once nothing holds it"
+    );
+    assert!(
+        port_is_bindable(tree.port),
+        "the descendant kept port {}; reaping must wait for the whole process group, \
+         not just the recorded leader, or startup silently falls back to a random port",
+        tree.port
+    );
+}
+
+/// A descendant that called `setsid()` is outside the group, so no group signal
+/// can reach it. Nothing can be done about that here -- but claiming the port
+/// came back when it did not is what made this failure invisible in the first
+/// place, so the outcome has to be reported honestly.
+#[test]
+fn a_descendant_that_escaped_the_group_is_reported_rather_than_claimed_reaped() {
+    // The escapee inherits fd 3 and gets its own session, so no group signal can
+    // reach it. It exits on its own rather than being cleaned up by pid: killing
+    // a pid read back from a file is the PID-reuse hazard the production code
+    // goes to some length to avoid, and a test should not model it.
+    let Some(tree) = OrphanTree::spawn("setsid --fork sh -c 'sleep 5';") else {
+        return;
+    };
+
+    let recovered = stop_recorded_server(
+        &tree.record(),
+        Duration::from_secs(2),
+        Duration::from_millis(250),
+    );
+
+    assert!(
+        !recovered,
+        "port {} is still held by a process outside the group, so the reap must not \
+         report it recovered",
+        tree.port
+    );
+}
+
+#[test]
+fn a_group_signal_is_never_aimed_at_the_whole_session() {
+    // kill(-1, sig) is POSIX's broadcast to every process the caller may signal.
+    // Whatever else changes, these must never look like a live group.
+    assert!(!group_still_alive(1));
+    assert!(!group_still_alive(0));
+    assert!(!group_still_alive(-1));
+
+    // This process is in some group, and that group is trivially non-empty.
+    // SAFETY: getpgid(0) reports the caller's own group and cannot fail.
+    let own_group = unsafe { libc::getpgid(0) };
+    assert!(group_still_alive(own_group));
+}
+
+/// A server-shaped process tree, orphaned onto init the way a crashed app leaves
+/// one behind, holding a real listening socket.
+struct OrphanTree {
+    pid: i32,
+    port: u16,
+    _scratch: TempDir,
+}
+
+impl OrphanTree {
+    /// `descendant` is shell run by the leader before it settles into its own
+    /// sleep loop; it inherits fd 3, the listening socket.
+    ///
+    /// Returns `None` where the tree cannot be built, which is a skip rather than
+    /// a failure: `setsid` is util-linux, not POSIX.
+    fn spawn(descendant: &str) -> Option<Self> {
+        if !command_exists("setsid") {
+            eprintln!("setsid is unavailable on this machine; skipping");
+            return None;
+        }
+
+        let scratch = TempDir::new("orphan");
+        let pidfile = scratch.path().join("leader.pid");
+        let listener =
+            TcpListener::bind(("127.0.0.1", 0)).expect("a scratch port should be bindable");
+        let port = listener
+            .local_addr()
+            .expect("a bound listener has a local address")
+            .port();
+
+        // The socket rides in as stdin, so the tree holds the port with no
+        // dependency on a helper binary. `exec 3<&0` first: POSIX hands an
+        // asynchronous list `/dev/null` for stdin, so without the dup a
+        // backgrounded descendant would silently lose the socket and the test
+        // would pass for the wrong reason.
+        let leader = format!(
+            "exec 3<&0; echo $$ > {pidfile}; {descendant} while :; do sleep 1; done",
+            pidfile = pidfile.display()
+        );
+        // `setsid` is invoked directly rather than through a shell: the script
+        // has to reach the inner `sh` unexpanded, and `$$` inside a nested quoted
+        // string would be substituted by the outer shell, recording the wrong
+        // pid. `--fork` guarantees the parent exits, which orphans the tree onto
+        // init -- without it a leader left as this test's child would linger as a
+        // zombie, keep its `/proc/<pid>/stat`, and make a pid-only wait look
+        // correct.
+        let mut orphaner = Command::new("setsid")
+            .arg("--fork")
+            .arg("sh")
+            .arg("-c")
+            .arg(&leader)
+            .stdin(Stdio::from(OwnedFd::from(listener)))
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("setsid should be spawnable");
+        orphaner
+            .wait()
+            .expect("setsid --fork should exit as soon as it has forked");
+
+        let pid = wait_for(Duration::from_secs(5), || read_pid(&pidfile))
+            .expect("the leader should record its pid");
+        let tree = Self {
+            pid,
+            port,
+            _scratch: scratch,
+        };
+        wait_for(Duration::from_secs(5), || {
+            (!port_is_bindable(port) && leads_own_process_group(pid)).then_some(())
+        })
+        .expect("the tree should lead its own group and hold the port before the reap starts");
+        Some(tree)
+    }
+
+    fn record(&self) -> ServerRecord {
+        ServerRecord {
+            pid: self.pid,
+            port: self.port,
+            start_time: process_start_time(self.pid).expect("a live pid has a start time"),
+            boot_id: boot_id().expect("Linux exposes a boot id"),
+            owner_pid: std::process::id() as i32,
+            owner_start_time: process_start_time(std::process::id() as i32)
+                .expect("this process has a start time"),
+        }
+    }
+}
+
+impl Drop for OrphanTree {
+    /// SIGKILL whatever survived, so a failing assertion cannot leak a process
+    /// tree that keeps its port for the rest of the run.
+    fn drop(&mut self) {
+        if group_still_alive(self.pid) {
+            // SAFETY: the group has members, so its pgid is still reserved and
+            // cannot have been recycled into a stranger's group.
+            unsafe {
+                libc::kill(-self.pid, libc::SIGKILL);
+            }
+        }
+    }
+}
+
+fn command_exists(name: &str) -> bool {
+    Command::new("sh")
+        .arg("-c")
+        .arg(format!("command -v {name}"))
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+fn read_pid(path: &Path) -> Option<i32> {
+    fs::read_to_string(path).ok()?.trim().parse().ok()
+}
+
+fn port_is_bindable(port: u16) -> bool {
+    TcpListener::bind(("127.0.0.1", port)).is_ok()
+}
+
+fn wait_for<T>(timeout: Duration, mut ready: impl FnMut() -> Option<T>) -> Option<T> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some(value) = ready() {
+            return Some(value);
+        }
+        if Instant::now() >= deadline {
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
 }
