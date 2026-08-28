@@ -47,23 +47,29 @@ impl Drop for TempDir {
 
 const PREFERRED_PORT: u16 = 17680;
 
-// Both port tests bind PREFERRED_PORT, and cargo runs tests in parallel. The
-// free-port case drops its probe before calling pick_available_port() — which
-// is exactly the window the fallback case spends holding that same port — so
-// unserialized they race and the free-port case gets handed a fallback port.
+// Held by every test here that binds a port, because cargo runs them in
+// parallel. Two distinct races, both of which have actually fired:
+//
+//   - Both port tests bind PREFERRED_PORT. The free-port case drops its probe
+//     before calling pick_available_port(), which is exactly the window the
+//     fallback case spends holding that same port, so unserialized the
+//     free-port case gets handed a fallback port.
+//   - pick_available_port() reports a port it has already released, so any
+//     concurrent bind of port 0 can be handed that same number before the
+//     fallback case re-binds it -- which is how the orphan tests below, which
+//     take ephemeral ports of their own, broke that assertion on CI.
+//
 // Poisoning is recovered from rather than propagated: one test panicking must
-// not turn the other into a second, misleading failure.
-static PREFERRED_PORT_GUARD: Mutex<()> = Mutex::new(());
+// not turn the others into further, misleading failures.
+static PORT_GUARD: Mutex<()> = Mutex::new(());
 
-fn preferred_port_guard() -> std::sync::MutexGuard<'static, ()> {
-    PREFERRED_PORT_GUARD
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
+fn port_guard() -> std::sync::MutexGuard<'static, ()> {
+    PORT_GUARD.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 #[test]
 fn preferred_port_is_used_when_free() {
-    let _serial = preferred_port_guard();
+    let _serial = port_guard();
     // Only meaningful when nothing else on the machine holds 17680.
     let Ok(probe) = TcpListener::bind(("127.0.0.1", PREFERRED_PORT)) else {
         eprintln!("port {PREFERRED_PORT} is busy on this machine; skipping");
@@ -80,7 +86,7 @@ fn preferred_port_is_used_when_free() {
 
 #[test]
 fn port_selection_falls_back_when_the_preferred_port_is_taken() {
-    let _serial = preferred_port_guard();
+    let _serial = port_guard();
     // Hold the preferred port for the duration of the call.
     let Ok(holder) = TcpListener::bind(("127.0.0.1", PREFERRED_PORT)) else {
         eprintln!("port {PREFERRED_PORT} is busy on this machine; skipping");
@@ -351,7 +357,9 @@ fn a_descendant_still_holding_the_port_outlives_the_leader() {
     // The subshell ignores SIGTERM and keeps listening; the leader takes the
     // default disposition and dies, exactly like a server whose child shuts down
     // slower than its parent.
-    let Some(tree) = OrphanTree::spawn("( trap '' TERM; while :; do sleep 1; done ) &") else {
+    let Some(tree) =
+        OrphanTree::spawn("( trap '' TERM; : > {ready}; while :; do sleep 1; done ) &")
+    else {
         return;
     };
 
@@ -383,7 +391,7 @@ fn a_descendant_that_escaped_the_group_is_reported_rather_than_claimed_reaped() 
     // reach it. It exits on its own rather than being cleaned up by pid: killing
     // a pid read back from a file is the PID-reuse hazard the production code
     // goes to some length to avoid, and a test should not model it.
-    let Some(tree) = OrphanTree::spawn("setsid --fork sh -c 'sleep 5';") else {
+    let Some(tree) = OrphanTree::spawn("setsid --fork sh -c ': > {ready}; sleep 5';") else {
         return;
     };
 
@@ -421,11 +429,19 @@ struct OrphanTree {
     pid: i32,
     port: u16,
     _scratch: TempDir,
+    /// Held for as long as the tree owns its port, so the ephemeral port it
+    /// takes cannot land on one `pick_available_port` has just released.
+    _serial: std::sync::MutexGuard<'static, ()>,
 }
 
 impl OrphanTree {
     /// `descendant` is shell run by the leader before it settles into its own
-    /// sleep loop; it inherits fd 3, the listening socket.
+    /// sleep loop; it inherits fd 3, the listening socket. It must touch
+    /// `{ready}`, which is substituted with a path this waits for -- the leader
+    /// holds the port from birth, so "the port is taken" says nothing about
+    /// whether the descendant this test is about exists yet. Reaping before it
+    /// is forked kills the leader alone and frees the port, which fails one of
+    /// these tests and, worse, silently passes the other.
     ///
     /// Returns `None` where the tree cannot be built, which is a skip rather than
     /// a failure: `setsid` is util-linux, not POSIX.
@@ -435,8 +451,10 @@ impl OrphanTree {
             return None;
         }
 
+        let serial = port_guard();
         let scratch = TempDir::new("orphan");
         let pidfile = scratch.path().join("leader.pid");
+        let ready = scratch.path().join("descendant.ready");
         let listener =
             TcpListener::bind(("127.0.0.1", 0)).expect("a scratch port should be bindable");
         let port = listener
@@ -451,7 +469,8 @@ impl OrphanTree {
         // would pass for the wrong reason.
         let leader = format!(
             "exec 3<&0; echo $$ > {pidfile}; {descendant} while :; do sleep 1; done",
-            pidfile = pidfile.display()
+            pidfile = pidfile.display(),
+            descendant = descendant.replace("{ready}", &ready.display().to_string())
         );
         // `setsid` is invoked directly rather than through a shell: the script
         // has to reach the inner `sh` unexpanded, and `$$` inside a nested quoted
@@ -480,11 +499,13 @@ impl OrphanTree {
             pid,
             port,
             _scratch: scratch,
+            _serial: serial,
         };
         wait_for(Duration::from_secs(5), || {
-            (!port_is_bindable(port) && leads_own_process_group(pid)).then_some(())
+            (ready.exists() && !port_is_bindable(port) && leads_own_process_group(pid))
+                .then_some(())
         })
-        .expect("the tree should lead its own group and hold the port before the reap starts");
+        .expect("the descendant should exist, and the tree lead its own group and hold the port");
         Some(tree)
     }
 
