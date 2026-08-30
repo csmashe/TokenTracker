@@ -525,7 +525,7 @@ jobs:
             local label="$1"; shift
             local found=("$@")
             if [ "${#found[@]}" -ne 1 ]; then
-              echo "::error::Expected exactly 1 $label, found ${#found[@]}: ${found[*]-none}"
+              echo "::error::Expected exactly 1 $label, found ${#found[@]}: ${found[*]-none}" >&2
               exit 1
             fi
             printf '%s' "${found[0]}"
